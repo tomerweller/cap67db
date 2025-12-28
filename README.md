@@ -43,6 +43,8 @@ The service will:
 | `AWS_REGION` | `us-east-2` | AWS region for S3 |
 | `STELLAR_NETWORK` | `pubnet` | Network: `pubnet`, `testnet`, `futurenet` |
 | `STELLAR_RPC_URL` | (auto) | Override Stellar RPC URL |
+| `INGEST_WORKERS` | `4` | Number of parallel event processing workers |
+| `INGEST_BATCH_SIZE` | `100` | Batch size for database writes |
 
 ## API Endpoints
 

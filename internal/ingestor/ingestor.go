@@ -19,12 +19,6 @@ import (
 	"github.com/stellar/go/xdr"
 )
 
-const (
-	// Number of parallel workers for ledger processing
-	numWorkers = 8
-	// Batch size for DB writes
-	batchSize = 100
-)
 
 // Ingestor handles CAP-67 event ingestion from the S3 data lake.
 type Ingestor struct {
@@ -249,6 +243,9 @@ type ledgerData struct {
 }
 
 func (i *Ingestor) processChunkParallel(ctx context.Context, ledgers []uint32) error {
+	numWorkers := i.cfg.IngestWorkers
+	batchSize := i.cfg.IngestBatch
+
 	// Channel for raw ledger data (producer -> workers)
 	ledgerChan := make(chan ledgerData, numWorkers*2)
 	// Channel for processed results (workers -> collector)

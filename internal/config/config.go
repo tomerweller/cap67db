@@ -13,6 +13,8 @@ type Config struct {
 	LogLevel      string
 	Network       string // pubnet, testnet, futurenet
 	RPCURL        string // Stellar RPC URL
+	IngestWorkers int    // Number of parallel processing workers
+	IngestBatch   int    // Batch size for DB writes
 }
 
 func Load() *Config {
@@ -24,6 +26,8 @@ func Load() *Config {
 		LogLevel:      getEnv("LOG_LEVEL", "info"),
 		Network:       getEnv("STELLAR_NETWORK", "pubnet"),
 		RPCURL:        getEnv("STELLAR_RPC_URL", ""),
+		IngestWorkers: getEnvInt("INGEST_WORKERS", 4),
+		IngestBatch:   getEnvInt("INGEST_BATCH_SIZE", 100),
 	}
 }
 
