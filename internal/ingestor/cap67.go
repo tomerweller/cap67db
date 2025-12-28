@@ -52,12 +52,13 @@ func IsCAP67Event(event xdr.ContractEvent) (string, bool) {
 	return "", false
 }
 
-// ParseTransferEvent parses a CAP-67 transfer event.
-// Transfer topics: [Symbol("transfer"), Address(from), Address(to), Bytes/String(asset)]
-// Transfer data: i128(amount) or struct { amount: i128, to_muxed_id?: ... }
+// ParseTransferEvent parses a CAP-67 or SEP-41 transfer event.
+// CAP-67 topics: [Symbol("transfer"), Address(from), Address(to), Bytes/String(asset)]
+// SEP-41 topics: [Symbol("transfer"), Address(from), Address(to)] - asset is the contract itself
+// Data: i128(amount) or struct { amount: i128, to_muxed_id?: ... }
 func ParseTransferEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.TransferEvent, error) {
 	topics := event.Body.V0.Topics
-	if len(topics) < 4 {
+	if len(topics) < 3 {
 		return nil, nil // Not enough topics for transfer
 	}
 
@@ -71,7 +72,15 @@ func ParseTransferEvent(event xdr.ContractEvent, ctx EventContext, eventIndex in
 		return nil, err
 	}
 
-	asset := extractAsset(topics[3])
+	// CAP-67 has asset in 4th topic, SEP-41 uses contract ID as asset
+	var asset string
+	if len(topics) >= 4 {
+		asset = extractAsset(topics[3])
+	}
+	// If no asset topic or empty, use contract ID as asset identifier
+	if asset == "" {
+		asset = ContractEventContractID(event)
+	}
 
 	amount, toMuxedID := extractAmountAndMuxedID(event.Body.V0.Data)
 
@@ -91,12 +100,13 @@ func ParseTransferEvent(event xdr.ContractEvent, ctx EventContext, eventIndex in
 	}, nil
 }
 
-// ParseMintEvent parses a CAP-67 mint event.
-// Mint topics: [Symbol("mint"), Address(to), Bytes/String(asset)]
-// Mint data: i128(amount) or struct { amount: i128, to_muxed_id?: ... }
+// ParseMintEvent parses a CAP-67 or SEP-41 mint event.
+// CAP-67 topics: [Symbol("mint"), Address(to), Bytes/String(asset)]
+// SEP-41 topics: [Symbol("mint"), Address(to)] - asset is the contract itself
+// Data: i128(amount) or struct { amount: i128, to_muxed_id?: ... }
 func ParseMintEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.MintEvent, error) {
 	topics := event.Body.V0.Topics
-	if len(topics) < 3 {
+	if len(topics) < 2 {
 		return nil, nil
 	}
 
@@ -105,7 +115,15 @@ func ParseMintEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32)
 		return nil, err
 	}
 
-	asset := extractAsset(topics[2])
+	// CAP-67 has asset in 3rd topic, SEP-41 uses contract ID as asset
+	var asset string
+	if len(topics) >= 3 {
+		asset = extractAsset(topics[2])
+	}
+	if asset == "" {
+		asset = ContractEventContractID(event)
+	}
+
 	amount, toMuxedID := extractAmountAndMuxedID(event.Body.V0.Data)
 
 	return &database.MintEvent{
@@ -123,12 +141,13 @@ func ParseMintEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32)
 	}, nil
 }
 
-// ParseBurnEvent parses a CAP-67 burn event.
-// Burn topics: [Symbol("burn"), Address(from), Bytes/String(asset)]
-// Burn data: i128(amount)
+// ParseBurnEvent parses a CAP-67 or SEP-41 burn event.
+// CAP-67 topics: [Symbol("burn"), Address(from), Bytes/String(asset)]
+// SEP-41 topics: [Symbol("burn"), Address(from)] - asset is the contract itself
+// Data: i128(amount)
 func ParseBurnEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.BurnEvent, error) {
 	topics := event.Body.V0.Topics
-	if len(topics) < 3 {
+	if len(topics) < 2 {
 		return nil, nil
 	}
 
@@ -137,7 +156,14 @@ func ParseBurnEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32)
 		return nil, err
 	}
 
-	asset := extractAsset(topics[2])
+	// CAP-67 has asset in 3rd topic, SEP-41 uses contract ID as asset
+	var asset string
+	if len(topics) >= 3 {
+		asset = extractAsset(topics[2])
+	}
+	if asset == "" {
+		asset = ContractEventContractID(event)
+	}
 
 	amount, _ := DecodeI128(event.Body.V0.Data)
 
@@ -155,12 +181,13 @@ func ParseBurnEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32)
 	}, nil
 }
 
-// ParseClawbackEvent parses a CAP-67 clawback event.
-// Clawback topics: [Symbol("clawback"), Address(from), Bytes/String(asset)]
-// Clawback data: i128(amount)
+// ParseClawbackEvent parses a CAP-67 or SEP-41 clawback event.
+// CAP-67 topics: [Symbol("clawback"), Address(from), Bytes/String(asset)]
+// SEP-41 topics: [Symbol("clawback"), Address(from)] - asset is the contract itself
+// Data: i128(amount)
 func ParseClawbackEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.ClawbackEvent, error) {
 	topics := event.Body.V0.Topics
-	if len(topics) < 3 {
+	if len(topics) < 2 {
 		return nil, nil
 	}
 
@@ -169,7 +196,14 @@ func ParseClawbackEvent(event xdr.ContractEvent, ctx EventContext, eventIndex in
 		return nil, err
 	}
 
-	asset := extractAsset(topics[2])
+	// CAP-67 has asset in 3rd topic, SEP-41 uses contract ID as asset
+	var asset string
+	if len(topics) >= 3 {
+		asset = extractAsset(topics[2])
+	}
+	if asset == "" {
+		asset = ContractEventContractID(event)
+	}
 
 	amount, _ := DecodeI128(event.Body.V0.Data)
 
@@ -216,12 +250,13 @@ func ParseFeeEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) 
 	}, nil
 }
 
-// ParseSetAuthorizedEvent parses a CAP-67 set_authorized event.
-// SetAuthorized topics: [Symbol("set_authorized"), Address(address), Bytes/String(asset)]
-// SetAuthorized data: bool(authorized)
+// ParseSetAuthorizedEvent parses a CAP-67 or SEP-41 set_authorized event.
+// CAP-67 topics: [Symbol("set_authorized"), Address(address), Bytes/String(asset)]
+// SEP-41 topics: [Symbol("set_authorized"), Address(address)] - asset is the contract itself
+// Data: bool(authorized)
 func ParseSetAuthorizedEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.SetAuthorizedEvent, error) {
 	topics := event.Body.V0.Topics
-	if len(topics) < 3 {
+	if len(topics) < 2 {
 		return nil, nil
 	}
 
@@ -230,7 +265,14 @@ func ParseSetAuthorizedEvent(event xdr.ContractEvent, ctx EventContext, eventInd
 		return nil, err
 	}
 
-	asset := extractAsset(topics[2])
+	// CAP-67 has asset in 3rd topic, SEP-41 uses contract ID as asset
+	var asset string
+	if len(topics) >= 3 {
+		asset = extractAsset(topics[2])
+	}
+	if asset == "" {
+		asset = ContractEventContractID(event)
+	}
 
 	authorized, _ := DecodeBool(event.Body.V0.Data)
 
