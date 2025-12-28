@@ -1,25 +1,11 @@
 package api
 
-// Pagination contains pagination info for list responses.
-type Pagination struct {
-	Limit   int  `json:"limit"`
-	Offset  int  `json:"offset"`
-	Total   int  `json:"total"`
-	HasMore bool `json:"has_more"`
-}
+import "github.com/stellar/cap67db/internal/database"
 
-// Meta contains service metadata included in responses.
-type Meta struct {
-	EarliestLedger uint32 `json:"earliest_ledger"`
-	LatestLedger   uint32 `json:"latest_ledger"`
-	RetentionDays  int    `json:"retention_days"`
-}
-
-// ListResponse is the standard response envelope for list endpoints.
-type ListResponse struct {
-	Data       interface{} `json:"data"`
-	Pagination Pagination  `json:"pagination"`
-	Meta       Meta        `json:"meta"`
+// EventsResponse is the response for the events endpoint.
+type EventsResponse struct {
+	Events []database.Event `json:"events"`
+	Cursor string           `json:"cursor,omitempty"`
 }
 
 // HealthResponse is the response for the health endpoint.

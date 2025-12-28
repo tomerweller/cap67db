@@ -138,63 +138,15 @@ func (db *DB) GetMissingLedgers(start, end uint32) ([]uint32, error) {
 	return missing, nil
 }
 
-// InsertTransferEvent inserts a transfer event.
-func (db *DB) InsertTransferEvent(e *TransferEvent) error {
+// InsertEvent inserts a unified event.
+func (db *DB) InsertEvent(e *Event) error {
 	_, err := db.conn.Exec(`
-		INSERT OR IGNORE INTO transfer_events
-		(id, ledger_sequence, tx_hash, closed_at, successful, in_successful_txn, contract_id, from_address, to_address, asset, amount, to_muxed_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, e.ID, e.LedgerSequence, e.TxHash, e.ClosedAt, e.Successful, e.InSuccessfulTxn, e.ContractID, e.FromAddress, e.ToAddress, e.Asset, e.Amount, e.ToMuxedID)
-	return err
-}
-
-// InsertMintEvent inserts a mint event.
-func (db *DB) InsertMintEvent(e *MintEvent) error {
-	_, err := db.conn.Exec(`
-		INSERT OR IGNORE INTO mint_events
-		(id, ledger_sequence, tx_hash, closed_at, successful, in_successful_txn, contract_id, to_address, asset, amount, to_muxed_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, e.ID, e.LedgerSequence, e.TxHash, e.ClosedAt, e.Successful, e.InSuccessfulTxn, e.ContractID, e.ToAddress, e.Asset, e.Amount, e.ToMuxedID)
-	return err
-}
-
-// InsertBurnEvent inserts a burn event.
-func (db *DB) InsertBurnEvent(e *BurnEvent) error {
-	_, err := db.conn.Exec(`
-		INSERT OR IGNORE INTO burn_events
-		(id, ledger_sequence, tx_hash, closed_at, successful, in_successful_txn, contract_id, from_address, asset, amount)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, e.ID, e.LedgerSequence, e.TxHash, e.ClosedAt, e.Successful, e.InSuccessfulTxn, e.ContractID, e.FromAddress, e.Asset, e.Amount)
-	return err
-}
-
-// InsertClawbackEvent inserts a clawback event.
-func (db *DB) InsertClawbackEvent(e *ClawbackEvent) error {
-	_, err := db.conn.Exec(`
-		INSERT OR IGNORE INTO clawback_events
-		(id, ledger_sequence, tx_hash, closed_at, successful, in_successful_txn, contract_id, from_address, asset, amount)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, e.ID, e.LedgerSequence, e.TxHash, e.ClosedAt, e.Successful, e.InSuccessfulTxn, e.ContractID, e.FromAddress, e.Asset, e.Amount)
-	return err
-}
-
-// InsertFeeEvent inserts a fee event.
-func (db *DB) InsertFeeEvent(e *FeeEvent) error {
-	_, err := db.conn.Exec(`
-		INSERT OR IGNORE INTO fee_events
-		(id, ledger_sequence, tx_hash, closed_at, successful, in_successful_txn, contract_id, from_address, amount)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, e.ID, e.LedgerSequence, e.TxHash, e.ClosedAt, e.Successful, e.InSuccessfulTxn, e.ContractID, e.FromAddress, e.Amount)
-	return err
-}
-
-// InsertSetAuthorizedEvent inserts a set_authorized event.
-func (db *DB) InsertSetAuthorizedEvent(e *SetAuthorizedEvent) error {
-	_, err := db.conn.Exec(`
-		INSERT OR IGNORE INTO set_authorized_events
-		(id, ledger_sequence, tx_hash, closed_at, successful, in_successful_txn, contract_id, address, asset, authorized)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, e.ID, e.LedgerSequence, e.TxHash, e.ClosedAt, e.Successful, e.InSuccessfulTxn, e.ContractID, e.Address, e.Asset, e.Authorized)
+		INSERT OR IGNORE INTO events
+		(id, event_type, ledger_sequence, tx_hash, closed_at, successful, in_successful_txn,
+		 contract_id, account, to_account, asset_name, amount, to_muxed_id, authorized)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, e.ID, e.EventType, e.LedgerSequence, e.TxHash, e.ClosedAt, e.Successful, e.InSuccessfulTxn,
+		e.ContractID, e.Account, e.ToAccount, e.AssetName, e.Amount, e.ToMuxedID, e.Authorized)
 	return err
 }
 
@@ -202,24 +154,13 @@ func (db *DB) InsertSetAuthorizedEvent(e *SetAuthorizedEvent) error {
 func (db *DB) DeleteOldEvents(retentionDays int) error {
 	cutoff := time.Now().AddDate(0, 0, -retentionDays)
 
-	tables := []string{
-		"transfer_events",
-		"mint_events",
-		"burn_events",
-		"clawback_events",
-		"fee_events",
-		"set_authorized_events",
-	}
-
-	for _, table := range tables {
-		_, err := db.conn.Exec(fmt.Sprintf(`DELETE FROM %s WHERE closed_at < ?`, table), cutoff)
-		if err != nil {
-			return fmt.Errorf("deleting from %s: %w", table, err)
-		}
+	_, err := db.conn.Exec(`DELETE FROM events WHERE closed_at < ?`, cutoff)
+	if err != nil {
+		return fmt.Errorf("deleting old events: %w", err)
 	}
 
 	// Also clean up ingested_ledgers
-	_, err := db.conn.Exec(`DELETE FROM ingested_ledgers WHERE closed_at < ?`, cutoff)
+	_, err = db.conn.Exec(`DELETE FROM ingested_ledgers WHERE closed_at < ?`, cutoff)
 	return err
 }
 

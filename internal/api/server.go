@@ -35,13 +35,8 @@ func (s *Server) registerRoutes() {
 	// Health/status
 	s.mux.HandleFunc("/health", s.corsMiddleware(s.health))
 
-	// API v1 endpoints
-	s.mux.HandleFunc("/api/v1/transfers", s.corsMiddleware(s.listTransfers))
-	s.mux.HandleFunc("/api/v1/mints", s.corsMiddleware(s.listMints))
-	s.mux.HandleFunc("/api/v1/burns", s.corsMiddleware(s.listBurns))
-	s.mux.HandleFunc("/api/v1/clawbacks", s.corsMiddleware(s.listClawbacks))
-	s.mux.HandleFunc("/api/v1/fees", s.corsMiddleware(s.listFees))
-	s.mux.HandleFunc("/api/v1/authorizations", s.corsMiddleware(s.listAuthorizations))
+	// Unified events endpoint
+	s.mux.HandleFunc("/events", s.corsMiddleware(s.listEvents))
 }
 
 // Handler returns the HTTP handler for the server.
@@ -81,30 +76,14 @@ func (s *Server) errorResponse(w http.ResponseWriter, status int, message string
 	s.jsonResponse(w, status, ErrorResponse{Error: message})
 }
 
-func (s *Server) listResponse(w http.ResponseWriter, data interface{}, params QueryParams, total int) {
-	state, _ := s.db.GetIngestionState()
-
-	meta := Meta{
-		RetentionDays: s.cfg.RetentionDays,
-	}
-	if state != nil {
-		meta.EarliestLedger = state.EarliestLedger
-		meta.LatestLedger = state.LatestLedger
-	}
-
+func (s *Server) eventsResponse(w http.ResponseWriter, events []database.Event, cursor string) {
 	// Handle nil slice
-	if data == nil {
-		data = []interface{}{}
+	if events == nil {
+		events = []database.Event{}
 	}
 
-	s.jsonResponse(w, http.StatusOK, ListResponse{
-		Data: data,
-		Pagination: Pagination{
-			Limit:   params.Limit,
-			Offset:  params.Offset,
-			Total:   total,
-			HasMore: params.Offset+params.Limit < total,
-		},
-		Meta: meta,
+	s.jsonResponse(w, http.StatusOK, EventsResponse{
+		Events: events,
+		Cursor: cursor,
 	})
 }

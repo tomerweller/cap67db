@@ -18,88 +18,30 @@ type IngestedLedger struct {
 	IngestedAt     time.Time `json:"ingested_at"`
 }
 
-// TransferEvent represents a CAP-67 transfer event.
-type TransferEvent struct {
-	ID                string    `json:"id"`
-	LedgerSequence    uint32    `json:"ledger_sequence"`
-	TxHash            string    `json:"tx_hash"`
-	ClosedAt          time.Time `json:"closed_at"`
-	Successful        bool      `json:"successful"`
-	InSuccessfulTxn   bool      `json:"in_successful_txn"`
-	ContractID        string    `json:"contract_id"`
-	FromAddress       string    `json:"from_address"`
-	ToAddress         string    `json:"to_address"`
-	Asset             string    `json:"asset"`
-	Amount            string    `json:"amount"`
-	ToMuxedID         *string   `json:"to_muxed_id,omitempty"`
+// Event represents a unified CAP-67/SEP-41 event.
+type Event struct {
+	ID              string    `json:"id"`
+	EventType       string    `json:"type"`
+	LedgerSequence  uint32    `json:"ledger_sequence"`
+	TxHash          string    `json:"tx_hash"`
+	ClosedAt        time.Time `json:"closed_at"`
+	Successful      bool      `json:"successful"`
+	InSuccessfulTxn bool      `json:"in_successful_txn"`
+	ContractID      string    `json:"contract_id"`
+	Account         string    `json:"account"`
+	ToAccount       *string   `json:"to_account,omitempty"`
+	AssetName       *string   `json:"asset_name,omitempty"`
+	Amount          *string   `json:"amount,omitempty"`
+	ToMuxedID       *string   `json:"to_muxed_id,omitempty"`
+	Authorized      *bool     `json:"authorized,omitempty"`
 }
 
-// MintEvent represents a CAP-67 mint event.
-type MintEvent struct {
-	ID                string    `json:"id"`
-	LedgerSequence    uint32    `json:"ledger_sequence"`
-	TxHash            string    `json:"tx_hash"`
-	ClosedAt          time.Time `json:"closed_at"`
-	Successful        bool      `json:"successful"`
-	InSuccessfulTxn   bool      `json:"in_successful_txn"`
-	ContractID        string    `json:"contract_id"`
-	ToAddress         string    `json:"to_address"`
-	Asset             string    `json:"asset"`
-	Amount            string    `json:"amount"`
-	ToMuxedID         *string   `json:"to_muxed_id,omitempty"`
-}
-
-// BurnEvent represents a CAP-67 burn event.
-type BurnEvent struct {
-	ID                string    `json:"id"`
-	LedgerSequence    uint32    `json:"ledger_sequence"`
-	TxHash            string    `json:"tx_hash"`
-	ClosedAt          time.Time `json:"closed_at"`
-	Successful        bool      `json:"successful"`
-	InSuccessfulTxn   bool      `json:"in_successful_txn"`
-	ContractID        string    `json:"contract_id"`
-	FromAddress       string    `json:"from_address"`
-	Asset             string    `json:"asset"`
-	Amount            string    `json:"amount"`
-}
-
-// ClawbackEvent represents a CAP-67 clawback event.
-type ClawbackEvent struct {
-	ID                string    `json:"id"`
-	LedgerSequence    uint32    `json:"ledger_sequence"`
-	TxHash            string    `json:"tx_hash"`
-	ClosedAt          time.Time `json:"closed_at"`
-	Successful        bool      `json:"successful"`
-	InSuccessfulTxn   bool      `json:"in_successful_txn"`
-	ContractID        string    `json:"contract_id"`
-	FromAddress       string    `json:"from_address"`
-	Asset             string    `json:"asset"`
-	Amount            string    `json:"amount"`
-}
-
-// FeeEvent represents a CAP-67 fee event.
-type FeeEvent struct {
-	ID                string    `json:"id"`
-	LedgerSequence    uint32    `json:"ledger_sequence"`
-	TxHash            string    `json:"tx_hash"`
-	ClosedAt          time.Time `json:"closed_at"`
-	Successful        bool      `json:"successful"`
-	InSuccessfulTxn   bool      `json:"in_successful_txn"`
-	ContractID        string    `json:"contract_id"`
-	FromAddress       string    `json:"from_address"`
-	Amount            string    `json:"amount"`
-}
-
-// SetAuthorizedEvent represents a CAP-67 set_authorized event.
-type SetAuthorizedEvent struct {
-	ID                string    `json:"id"`
-	LedgerSequence    uint32    `json:"ledger_sequence"`
-	TxHash            string    `json:"tx_hash"`
-	ClosedAt          time.Time `json:"closed_at"`
-	Successful        bool      `json:"successful"`
-	InSuccessfulTxn   bool      `json:"in_successful_txn"`
-	ContractID        string    `json:"contract_id"`
-	Address           string    `json:"address"`
-	Asset             string    `json:"asset"`
-	Authorized        bool      `json:"authorized"`
-}
+// Event type constants
+const (
+	EventTypeTransfer      = "transfer"
+	EventTypeMint          = "mint"
+	EventTypeBurn          = "burn"
+	EventTypeClawback      = "clawback"
+	EventTypeFee           = "fee"
+	EventTypeSetAuthorized = "set_authorized"
+)

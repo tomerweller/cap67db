@@ -401,81 +401,34 @@ func (i *Ingestor) processEvent(event xdr.ContractEvent, ctx EventContext, event
 		return nil
 	}
 
+	e, err := ParseEvent(eventType, event, ctx, eventIndex)
+	if err != nil {
+		return err
+	}
+	if e == nil {
+		return nil
+	}
+
+	if err := i.db.InsertEvent(e); err != nil {
+		return err
+	}
+
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
 	switch eventType {
 	case "transfer":
-		e, err := ParseTransferEvent(event, ctx, eventIndex)
-		if err != nil {
-			return err
-		}
-		if e != nil {
-			if err := i.db.InsertTransferEvent(e); err != nil {
-				return err
-			}
-			i.statsTransfer++
-		}
-
+		i.statsTransfer++
 	case "mint":
-		e, err := ParseMintEvent(event, ctx, eventIndex)
-		if err != nil {
-			return err
-		}
-		if e != nil {
-			if err := i.db.InsertMintEvent(e); err != nil {
-				return err
-			}
-			i.statsMint++
-		}
-
+		i.statsMint++
 	case "burn":
-		e, err := ParseBurnEvent(event, ctx, eventIndex)
-		if err != nil {
-			return err
-		}
-		if e != nil {
-			if err := i.db.InsertBurnEvent(e); err != nil {
-				return err
-			}
-			i.statsBurn++
-		}
-
+		i.statsBurn++
 	case "clawback":
-		e, err := ParseClawbackEvent(event, ctx, eventIndex)
-		if err != nil {
-			return err
-		}
-		if e != nil {
-			if err := i.db.InsertClawbackEvent(e); err != nil {
-				return err
-			}
-			i.statsClawback++
-		}
-
+		i.statsClawback++
 	case "fee":
-		e, err := ParseFeeEvent(event, ctx, eventIndex)
-		if err != nil {
-			return err
-		}
-		if e != nil {
-			if err := i.db.InsertFeeEvent(e); err != nil {
-				return err
-			}
-			i.statsFee++
-		}
-
+		i.statsFee++
 	case "set_authorized":
-		e, err := ParseSetAuthorizedEvent(event, ctx, eventIndex)
-		if err != nil {
-			return err
-		}
-		if e != nil {
-			if err := i.db.InsertSetAuthorizedEvent(e); err != nil {
-				return err
-			}
-			i.statsSetAuthorized++
-		}
+		i.statsSetAuthorized++
 	}
 
 	return nil

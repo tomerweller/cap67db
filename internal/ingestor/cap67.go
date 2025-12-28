@@ -22,8 +22,8 @@ var cap67EventTypes = map[string]bool{
 type EventContext struct {
 	LedgerSequence  uint32
 	TxHash          string
-	TxOrder         int32  // 1-based position in ledger
-	OpIndex         int32  // 1-based, 0 for tx-level events
+	TxOrder         int32 // 1-based position in ledger
+	OpIndex         int32 // 1-based, 0 for tx-level events
 	ClosedAt        time.Time
 	Successful      bool
 	InSuccessfulTxn bool
@@ -52,11 +52,31 @@ func IsCAP67Event(event xdr.ContractEvent) (string, bool) {
 	return "", false
 }
 
-// ParseTransferEvent parses a CAP-67 or SEP-41 transfer event.
+// ParseEvent parses a CAP-67 or SEP-41 event into a unified Event struct.
+func ParseEvent(eventType string, event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.Event, error) {
+	switch eventType {
+	case database.EventTypeTransfer:
+		return parseTransferEvent(event, ctx, eventIndex)
+	case database.EventTypeMint:
+		return parseMintEvent(event, ctx, eventIndex)
+	case database.EventTypeBurn:
+		return parseBurnEvent(event, ctx, eventIndex)
+	case database.EventTypeClawback:
+		return parseClawbackEvent(event, ctx, eventIndex)
+	case database.EventTypeFee:
+		return parseFeeEvent(event, ctx, eventIndex)
+	case database.EventTypeSetAuthorized:
+		return parseSetAuthorizedEvent(event, ctx, eventIndex)
+	default:
+		return nil, nil
+	}
+}
+
+// parseTransferEvent parses a CAP-67 or SEP-41 transfer event.
 // CAP-67 topics: [Symbol("transfer"), Address(from), Address(to), Bytes/String(asset)]
 // SEP-41 topics: [Symbol("transfer"), Address(from), Address(to)] - asset is the contract itself
 // Data: i128(amount) or struct { amount: i128, to_muxed_id?: ... }
-func ParseTransferEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.TransferEvent, error) {
+func parseTransferEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.Event, error) {
 	topics := event.Body.V0.Topics
 	if len(topics) < 3 {
 		return nil, nil // Not enough topics for transfer
@@ -73,34 +93,38 @@ func ParseTransferEvent(event xdr.ContractEvent, ctx EventContext, eventIndex in
 	}
 
 	// CAP-67 has asset in 4th topic, SEP-41 tokens don't include it
-	var asset string
+	var assetName *string
 	if len(topics) >= 4 {
-		asset = extractAsset(topics[3])
+		asset := extractAsset(topics[3])
+		if asset != "" {
+			assetName = &asset
+		}
 	}
 
 	amount, toMuxedID := extractAmountAndMuxedID(event.Body.V0.Data)
 
-	return &database.TransferEvent{
+	return &database.Event{
 		ID:              database.MakeEventID(ctx.LedgerSequence, ctx.TxOrder, ctx.OpIndex, eventIndex),
+		EventType:       database.EventTypeTransfer,
 		LedgerSequence:  ctx.LedgerSequence,
 		TxHash:          ctx.TxHash,
 		ClosedAt:        ctx.ClosedAt,
 		Successful:      ctx.Successful,
 		InSuccessfulTxn: ctx.InSuccessfulTxn,
 		ContractID:      ContractEventContractID(event),
-		FromAddress:     from,
-		ToAddress:       to,
-		Asset:           asset,
-		Amount:          amount,
+		Account:         from,
+		ToAccount:       &to,
+		AssetName:       assetName,
+		Amount:          &amount,
 		ToMuxedID:       toMuxedID,
 	}, nil
 }
 
-// ParseMintEvent parses a CAP-67 or SEP-41 mint event.
+// parseMintEvent parses a CAP-67 or SEP-41 mint event.
 // CAP-67 topics: [Symbol("mint"), Address(to), Bytes/String(asset)]
 // SEP-41 topics: [Symbol("mint"), Address(to)] - asset is the contract itself
 // Data: i128(amount) or struct { amount: i128, to_muxed_id?: ... }
-func ParseMintEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.MintEvent, error) {
+func parseMintEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.Event, error) {
 	topics := event.Body.V0.Topics
 	if len(topics) < 2 {
 		return nil, nil
@@ -112,33 +136,37 @@ func ParseMintEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32)
 	}
 
 	// CAP-67 has asset in 3rd topic, SEP-41 tokens don't include it
-	var asset string
+	var assetName *string
 	if len(topics) >= 3 {
-		asset = extractAsset(topics[2])
+		asset := extractAsset(topics[2])
+		if asset != "" {
+			assetName = &asset
+		}
 	}
 
 	amount, toMuxedID := extractAmountAndMuxedID(event.Body.V0.Data)
 
-	return &database.MintEvent{
+	return &database.Event{
 		ID:              database.MakeEventID(ctx.LedgerSequence, ctx.TxOrder, ctx.OpIndex, eventIndex),
+		EventType:       database.EventTypeMint,
 		LedgerSequence:  ctx.LedgerSequence,
 		TxHash:          ctx.TxHash,
 		ClosedAt:        ctx.ClosedAt,
 		Successful:      ctx.Successful,
 		InSuccessfulTxn: ctx.InSuccessfulTxn,
 		ContractID:      ContractEventContractID(event),
-		ToAddress:       to,
-		Asset:           asset,
-		Amount:          amount,
+		Account:         to, // For mint, the recipient is the primary account
+		AssetName:       assetName,
+		Amount:          &amount,
 		ToMuxedID:       toMuxedID,
 	}, nil
 }
 
-// ParseBurnEvent parses a CAP-67 or SEP-41 burn event.
+// parseBurnEvent parses a CAP-67 or SEP-41 burn event.
 // CAP-67 topics: [Symbol("burn"), Address(from), Bytes/String(asset)]
 // SEP-41 topics: [Symbol("burn"), Address(from)] - asset is the contract itself
 // Data: i128(amount)
-func ParseBurnEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.BurnEvent, error) {
+func parseBurnEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.Event, error) {
 	topics := event.Body.V0.Topics
 	if len(topics) < 2 {
 		return nil, nil
@@ -150,32 +178,36 @@ func ParseBurnEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32)
 	}
 
 	// CAP-67 has asset in 3rd topic, SEP-41 tokens don't include it
-	var asset string
+	var assetName *string
 	if len(topics) >= 3 {
-		asset = extractAsset(topics[2])
+		asset := extractAsset(topics[2])
+		if asset != "" {
+			assetName = &asset
+		}
 	}
 
 	amount, _ := DecodeI128(event.Body.V0.Data)
 
-	return &database.BurnEvent{
+	return &database.Event{
 		ID:              database.MakeEventID(ctx.LedgerSequence, ctx.TxOrder, ctx.OpIndex, eventIndex),
+		EventType:       database.EventTypeBurn,
 		LedgerSequence:  ctx.LedgerSequence,
 		TxHash:          ctx.TxHash,
 		ClosedAt:        ctx.ClosedAt,
 		Successful:      ctx.Successful,
 		InSuccessfulTxn: ctx.InSuccessfulTxn,
 		ContractID:      ContractEventContractID(event),
-		FromAddress:     from,
-		Asset:           asset,
-		Amount:          amount,
+		Account:         from,
+		AssetName:       assetName,
+		Amount:          &amount,
 	}, nil
 }
 
-// ParseClawbackEvent parses a CAP-67 or SEP-41 clawback event.
+// parseClawbackEvent parses a CAP-67 or SEP-41 clawback event.
 // CAP-67 topics: [Symbol("clawback"), Address(from), Bytes/String(asset)]
 // SEP-41 topics: [Symbol("clawback"), Address(from)] - asset is the contract itself
 // Data: i128(amount)
-func ParseClawbackEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.ClawbackEvent, error) {
+func parseClawbackEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.Event, error) {
 	topics := event.Body.V0.Topics
 	if len(topics) < 2 {
 		return nil, nil
@@ -187,31 +219,35 @@ func ParseClawbackEvent(event xdr.ContractEvent, ctx EventContext, eventIndex in
 	}
 
 	// CAP-67 has asset in 3rd topic, SEP-41 tokens don't include it
-	var asset string
+	var assetName *string
 	if len(topics) >= 3 {
-		asset = extractAsset(topics[2])
+		asset := extractAsset(topics[2])
+		if asset != "" {
+			assetName = &asset
+		}
 	}
 
 	amount, _ := DecodeI128(event.Body.V0.Data)
 
-	return &database.ClawbackEvent{
+	return &database.Event{
 		ID:              database.MakeEventID(ctx.LedgerSequence, ctx.TxOrder, ctx.OpIndex, eventIndex),
+		EventType:       database.EventTypeClawback,
 		LedgerSequence:  ctx.LedgerSequence,
 		TxHash:          ctx.TxHash,
 		ClosedAt:        ctx.ClosedAt,
 		Successful:      ctx.Successful,
 		InSuccessfulTxn: ctx.InSuccessfulTxn,
 		ContractID:      ContractEventContractID(event),
-		FromAddress:     from,
-		Asset:           asset,
-		Amount:          amount,
+		Account:         from,
+		AssetName:       assetName,
+		Amount:          &amount,
 	}, nil
 }
 
-// ParseFeeEvent parses a CAP-67 fee event.
+// parseFeeEvent parses a CAP-67 fee event.
 // Fee topics: [Symbol("fee"), Address(from)]
 // Fee data: i128(amount) - positive for charge, negative for refund
-func ParseFeeEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.FeeEvent, error) {
+func parseFeeEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.Event, error) {
 	topics := event.Body.V0.Topics
 	if len(topics) < 2 {
 		return nil, nil
@@ -224,24 +260,25 @@ func ParseFeeEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) 
 
 	amount, _ := DecodeI128(event.Body.V0.Data)
 
-	return &database.FeeEvent{
+	return &database.Event{
 		ID:              database.MakeEventID(ctx.LedgerSequence, ctx.TxOrder, ctx.OpIndex, eventIndex),
+		EventType:       database.EventTypeFee,
 		LedgerSequence:  ctx.LedgerSequence,
 		TxHash:          ctx.TxHash,
 		ClosedAt:        ctx.ClosedAt,
 		Successful:      ctx.Successful,
 		InSuccessfulTxn: ctx.InSuccessfulTxn,
 		ContractID:      ContractEventContractID(event),
-		FromAddress:     from,
-		Amount:          amount,
+		Account:         from,
+		Amount:          &amount,
 	}, nil
 }
 
-// ParseSetAuthorizedEvent parses a CAP-67 or SEP-41 set_authorized event.
+// parseSetAuthorizedEvent parses a CAP-67 or SEP-41 set_authorized event.
 // CAP-67 topics: [Symbol("set_authorized"), Address(address), Bytes/String(asset)]
 // SEP-41 topics: [Symbol("set_authorized"), Address(address)] - asset is the contract itself
 // Data: bool(authorized)
-func ParseSetAuthorizedEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.SetAuthorizedEvent, error) {
+func parseSetAuthorizedEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.Event, error) {
 	topics := event.Body.V0.Topics
 	if len(topics) < 2 {
 		return nil, nil
@@ -253,24 +290,28 @@ func ParseSetAuthorizedEvent(event xdr.ContractEvent, ctx EventContext, eventInd
 	}
 
 	// CAP-67 has asset in 3rd topic, SEP-41 tokens don't include it
-	var asset string
+	var assetName *string
 	if len(topics) >= 3 {
-		asset = extractAsset(topics[2])
+		asset := extractAsset(topics[2])
+		if asset != "" {
+			assetName = &asset
+		}
 	}
 
 	authorized, _ := DecodeBool(event.Body.V0.Data)
 
-	return &database.SetAuthorizedEvent{
+	return &database.Event{
 		ID:              database.MakeEventID(ctx.LedgerSequence, ctx.TxOrder, ctx.OpIndex, eventIndex),
+		EventType:       database.EventTypeSetAuthorized,
 		LedgerSequence:  ctx.LedgerSequence,
 		TxHash:          ctx.TxHash,
 		ClosedAt:        ctx.ClosedAt,
 		Successful:      ctx.Successful,
 		InSuccessfulTxn: ctx.InSuccessfulTxn,
 		ContractID:      ContractEventContractID(event),
-		Address:         addr,
-		Asset:           asset,
-		Authorized:      authorized,
+		Account:         addr,
+		AssetName:       assetName,
+		Authorized:      &authorized,
 	}, nil
 }
 
