@@ -1,14 +1,14 @@
 # cap67db
 
-A Go service that ingests [CAP-67](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0067.md) token events from the Stellar network and serves them via a RESTful API.
+A Go service that ingests [CAP-67](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0067.md) and SEP-41 token events from the Stellar network and serves them via a RESTful API.
 
 ## Features
 
-- **CAP-67 Event Types**: Ingests `transfer`, `mint`, `burn`, `clawback`, `fee`, and `set_authorized` events
+- **CAP-67 & SEP-41 Events**: Ingests `transfer`, `mint`, `burn`, `clawback`, `fee`, and `set_authorized` events
 - **AWS S3 Data Lake**: Reads from `s3://aws-public-blockchain/v1.1/stellar/ledgers/`
 - **SQLite Storage**: Lightweight, single-file database with configurable retention
 - **Stellar RPC Compatible IDs**: Event IDs use the same TOID-based format as Stellar RPC
-- **REST API**: Query events with filtering and pagination
+- **Unified API**: Single `/events` endpoint with flexible filtering
 - **Backfill + Continuous**: Backfills retention window on startup, then ingests in real-time
 
 ## Quick Start
@@ -64,92 +64,100 @@ GET /health
 
 ### List Events
 
-All event endpoints support these query parameters:
+```
+GET /events
+```
+
+Query all CAP-67 and SEP-41 events with optional filters.
+
+#### Query Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
+| `type` | string | Event types, comma-separated: `transfer`, `mint`, `burn`, `clawback`, `fee`, `set_authorized` |
+| `contract_id` | string | Filter by contract address |
+| `account` | string | Filter by account (matches both sender and recipient) |
+| `start_ledger` | int | Minimum ledger sequence |
+| `end_ledger` | int | Maximum ledger sequence |
+| `cursor` | string | Pagination cursor (event ID) |
 | `limit` | int | Max records (1-1000, default 100) |
-| `offset` | int | Pagination offset |
-| `from_ledger` | int | Filter by minimum ledger |
-| `to_ledger` | int | Filter by maximum ledger |
-| `from_timestamp` | RFC3339 | Filter by minimum time |
-| `to_timestamp` | RFC3339 | Filter by maximum time |
-| `contract_id` | string | Filter by contract |
-| `order` | string | `asc` or `desc` (default) |
+| `order` | string | `asc` (default) or `desc` |
 
-#### Transfers
+#### Example Queries
 
-```
-GET /api/v1/transfers
-GET /api/v1/transfers?asset=native&from=GABC...&to=GDEF...
-```
+```bash
+# All events
+GET /events
 
-#### Mints
+# Only transfers and mints
+GET /events?type=transfer,mint
 
-```
-GET /api/v1/mints
-GET /api/v1/mints?to=GABC...&asset=USDC:GA5ZS...
-```
+# Events for a specific account (as sender or recipient)
+GET /events?account=GABC...
 
-#### Burns
-
-```
-GET /api/v1/burns
-GET /api/v1/burns?from=GABC...
-```
-
-#### Fees
-
-```
-GET /api/v1/fees
-GET /api/v1/fees?from=GABC...
-```
-
-#### Clawbacks
-
-```
-GET /api/v1/clawbacks
-```
-
-#### Authorizations
-
-```
-GET /api/v1/authorizations
-GET /api/v1/authorizations?address=GABC...&authorized=true
+# Paginate through results
+GET /events?limit=100
+GET /events?limit=100&cursor=0259337177669865472-0000000005
 ```
 
 ### Response Format
 
 ```json
 {
-  "data": [
+  "events": [
     {
       "id": "0259337177669865472-0000000005",
+      "type": "transfer",
       "ledger_sequence": 60381642,
       "tx_hash": "a416848ac38d8613...",
       "closed_at": "2025-12-20T00:38:58Z",
       "successful": true,
       "in_successful_txn": true,
       "contract_id": "CAJJZSGMMM3PD7N33...",
-      "from_address": "GDIJHL7ZW33GV2JX...",
-      "to_address": "CAJJZSGMMM3PD7N33...",
-      "asset": "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "account": "GDIJHL7ZW33GV2JX...",
+      "to_account": "GEFGH...",
+      "asset_name": "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
       "amount": "68800000"
+    },
+    {
+      "id": "0259337177669865472-0000000010",
+      "type": "mint",
+      "ledger_sequence": 60381642,
+      "tx_hash": "b527959bd49e9724...",
+      "closed_at": "2025-12-20T00:38:58Z",
+      "successful": true,
+      "in_successful_txn": true,
+      "contract_id": "CB23WRDQWGSP6YPM...",
+      "account": "GCQXJ65SN3ZFVO73...",
+      "asset_name": "KALE:GBDVX4VELCDSQ54K...",
+      "amount": "10399418"
+    },
+    {
+      "id": "0259337177669865472-0000000015",
+      "type": "fee",
+      "ledger_sequence": 60381642,
+      "tx_hash": "c638060ce50fa835...",
+      "closed_at": "2025-12-20T00:38:58Z",
+      "successful": true,
+      "in_successful_txn": true,
+      "contract_id": "CAS3J7GYLGXMF6TD...",
+      "account": "GC53ORAJQ4WZQJCG...",
+      "amount": "100"
     }
   ],
-  "pagination": {
-    "limit": 100,
-    "offset": 0,
-    "total": 12345,
-    "has_more": true
-  },
-  "meta": {
-    "earliest_ledger": 60381640,
-    "latest_ledger": 60502600,
-    "retention_days": 7
-  }
+  "cursor": "0259337177669865472-0000000015"
 }
 ```
+
+### Event Fields by Type
+
+| Field | transfer | mint | burn | clawback | fee | set_authorized |
+|-------|:--------:|:----:|:----:|:--------:|:---:|:--------------:|
+| account | sender | recipient | burner | clawed-from | payer | target |
+| to_account | recipient | | | | | |
+| asset_name | yes | yes | yes | yes | | yes |
+| amount | yes | yes | yes | yes | yes | |
+| authorized | | | | | | yes |
 
 ## Event ID Format
 
@@ -165,6 +173,29 @@ The TOID (Transaction Object ID) encodes:
 - Bits 0-31: Ledger sequence
 - Bits 32-51: Transaction order (1-based)
 - Bits 52-63: Operation index
+
+## Database Schema
+
+The service uses a single sparse `events` table:
+
+```sql
+CREATE TABLE events (
+    id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    ledger_sequence INTEGER NOT NULL,
+    tx_hash TEXT NOT NULL,
+    closed_at TIMESTAMP NOT NULL,
+    successful BOOLEAN NOT NULL,
+    in_successful_txn BOOLEAN NOT NULL,
+    contract_id TEXT NOT NULL,
+    account TEXT NOT NULL,
+    to_account TEXT,
+    asset_name TEXT,
+    amount TEXT,
+    to_muxed_id TEXT,
+    authorized BOOLEAN
+);
+```
 
 ## Project Structure
 
