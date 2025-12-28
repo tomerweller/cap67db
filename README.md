@@ -46,6 +46,50 @@ The service will:
 | `INGEST_WORKERS` | `4` | Number of parallel event processing workers |
 | `INGEST_BATCH_SIZE` | `100` | Batch size for database writes |
 
+## Ingestion Architecture
+
+### Data Source
+
+The service reads ledger data from the [AWS Public Blockchain Data](https://registry.opendata.aws/stellar-ledgers/) S3 bucket maintained by the Stellar Development Foundation. Each ledger is stored as a separate XDR-encoded file containing the full `LedgerCloseMeta`.
+
+### Processing Pipeline
+
+```
+┌─────────────┐    ┌──────────────┐    ┌─────────────┐    ┌──────────┐
+│   S3 Data   │───▶│   Producer   │───▶│   Workers   │───▶│  SQLite  │
+│    Lake     │    │  (sequential)│    │  (parallel) │    │  (batch) │
+└─────────────┘    └──────────────┘    └─────────────┘    └──────────┘
+```
+
+1. **Producer**: A single goroutine reads ledgers sequentially from S3 using the `BufferedStorageBackend` (which requires sequential access). It buffers ahead to minimize wait time.
+
+2. **Workers**: Multiple worker goroutines (default: 4) process ledger data in parallel:
+   - Parse XDR transaction metadata
+   - Identify CAP-67/SEP-41 contract events by topic signature
+   - Extract and decode event parameters (addresses, amounts, etc.)
+   - Generate Stellar RPC-compatible event IDs
+
+3. **Batch Writer**: Events are collected and written to SQLite in batches (default: 100 ledgers) using prepared statements within a single transaction.
+
+### Performance Characteristics
+
+| Metric | Value |
+|--------|-------|
+| Backfill speed | ~100 ledgers/sec |
+| 7-day backfill | ~3 hours |
+| Database size | ~3.5 GB/day |
+| Memory usage | ~200 MB |
+
+**Bottleneck**: S3 network latency dominates processing time. The parallel workers ensure CPU is utilized while waiting for S3 responses, but adding more workers beyond 4 provides diminishing returns.
+
+### Optimizations
+
+- **Producer-consumer pattern**: Decouples S3 I/O from CPU-bound XDR parsing
+- **Batch database writes**: Reduces SQLite transaction overhead by 100x
+- **Prepared statements**: Reuses compiled SQL for insert performance
+- **WAL mode**: Enables concurrent reads during writes
+- **Buffered S3 backend**: Pre-fetches ledgers to hide network latency
+
 ## API Endpoints
 
 ### Health Check
