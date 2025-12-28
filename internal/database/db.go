@@ -37,15 +37,26 @@ func (db *DB) Close() error {
 }
 
 func (db *DB) migrate() error {
-	// Split schema into individual statements and execute each
-	statements := strings.Split(schemaSQL, ";")
+	// Remove SQL comments and split into statements
+	lines := strings.Split(schemaSQL, "\n")
+	var cleanLines []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "--") {
+			continue
+		}
+		cleanLines = append(cleanLines, line)
+	}
+	cleanSQL := strings.Join(cleanLines, "\n")
+
+	statements := strings.Split(cleanSQL, ";")
 	for _, stmt := range statements {
 		stmt = strings.TrimSpace(stmt)
-		if stmt == "" || strings.HasPrefix(stmt, "--") {
+		if stmt == "" {
 			continue
 		}
 		if _, err := db.conn.Exec(stmt); err != nil {
-			return fmt.Errorf("executing migration: %w", err)
+			return fmt.Errorf("executing migration %q: %w", stmt[:min(50, len(stmt))], err)
 		}
 	}
 	return nil
