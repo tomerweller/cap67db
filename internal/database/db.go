@@ -150,6 +150,78 @@ func (db *DB) InsertEvent(e *Event) error {
 	return err
 }
 
+// InsertEventsBatch inserts multiple events in a single transaction.
+func (db *DB) InsertEventsBatch(events []*Event) error {
+	if len(events) == 0 {
+		return nil
+	}
+
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
+		INSERT OR IGNORE INTO events
+		(id, event_type, ledger_sequence, tx_hash, closed_at, successful, in_successful_txn,
+		 contract_id, account, to_account, asset_name, amount, to_muxed_id, authorized)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, e := range events {
+		_, err := stmt.Exec(e.ID, e.EventType, e.LedgerSequence, e.TxHash, e.ClosedAt, e.Successful, e.InSuccessfulTxn,
+			e.ContractID, e.Account, e.ToAccount, e.AssetName, e.Amount, e.ToMuxedID, e.Authorized)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// MarkLedgersIngestedBatch marks multiple ledgers as ingested in a single transaction.
+func (db *DB) MarkLedgersIngestedBatch(ledgers []LedgerMark) error {
+	if len(ledgers) == 0 {
+		return nil
+	}
+
+	tx, err := db.conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`
+		INSERT OR IGNORE INTO ingested_ledgers (ledger_sequence, closed_at, ingested_at)
+		VALUES (?, ?, ?)
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	now := time.Now()
+	for _, l := range ledgers {
+		_, err := stmt.Exec(l.Sequence, l.ClosedAt, now)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+// LedgerMark represents a ledger to be marked as ingested.
+type LedgerMark struct {
+	Sequence uint32
+	ClosedAt time.Time
+}
+
 // DeleteOldEvents deletes events older than the retention period.
 func (db *DB) DeleteOldEvents(retentionDays int) error {
 	cutoff := time.Now().AddDate(0, 0, -retentionDays)

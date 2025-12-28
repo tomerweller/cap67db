@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/stellar/cap67db/internal/config"
@@ -16,6 +17,13 @@ import (
 	"github.com/stellar/go/ingest/ledgerbackend"
 	"github.com/stellar/go/support/datastore"
 	"github.com/stellar/go/xdr"
+)
+
+const (
+	// Number of parallel workers for ledger processing
+	numWorkers = 8
+	// Batch size for DB writes
+	batchSize = 100
 )
 
 // Ingestor handles CAP-67 event ingestion from the S3 data lake.
@@ -194,12 +202,20 @@ func (i *Ingestor) Run(ctx context.Context) error {
 	return i.continuousIngest(ctx, latestLedger+1)
 }
 
+// ledgerResult holds the processed data from a single ledger
+type ledgerResult struct {
+	seq      uint32
+	events   []*database.Event
+	closedAt time.Time
+	err      error
+}
+
 func (i *Ingestor) backfill(ctx context.Context, ledgers []uint32) error {
 	if len(ledgers) == 0 {
 		return nil
 	}
 
-	// Process in chunks to avoid memory issues
+	// Process in chunks
 	chunkSize := 1000
 	for chunkStart := 0; chunkStart < len(ledgers); chunkStart += chunkSize {
 		chunkEnd := chunkStart + chunkSize
@@ -211,37 +227,269 @@ func (i *Ingestor) backfill(ctx context.Context, ledgers []uint32) error {
 		startSeq := chunk[0]
 		endSeq := chunk[len(chunk)-1]
 
-		// Prepare range
+		// Prepare range for all ledgers in chunk
 		ledgerRange := ledgerbackend.BoundedRange(startSeq, endSeq)
 		if err := i.backend.PrepareRange(ctx, ledgerRange); err != nil {
 			return fmt.Errorf("preparing range %d-%d: %w", startSeq, endSeq, err)
 		}
 
-		for _, seq := range chunk {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-
-			if err := i.processLedger(ctx, seq); err != nil {
-				log.Printf("Error processing ledger %d: %v", seq, err)
-				continue
-			}
-
-			i.mu.Lock()
-			i.backfillCurrent++
-			current := i.backfillCurrent
-			total := i.backfillTotal
-			i.mu.Unlock()
-
-			if current%1000 == 0 || current == total {
-				log.Printf("Backfill progress: %d/%d (%.1f%%)", current, total, float64(current)/float64(total)*100)
-			}
+		// Process chunk with parallel workers
+		if err := i.processChunkParallel(ctx, chunk); err != nil {
+			return err
 		}
 	}
 
 	return nil
+}
+
+// ledgerData holds raw ledger data for processing
+type ledgerData struct {
+	seq        uint32
+	ledgerMeta xdr.LedgerCloseMeta
+}
+
+func (i *Ingestor) processChunkParallel(ctx context.Context, ledgers []uint32) error {
+	// Channel for raw ledger data (producer -> workers)
+	ledgerChan := make(chan ledgerData, numWorkers*2)
+	// Channel for processed results (workers -> collector)
+	results := make(chan ledgerResult, numWorkers*2)
+
+	// Track progress
+	var processed int64
+
+	// Start processing workers
+	var wg sync.WaitGroup
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for ld := range ledgerChan {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				events, closedAt := i.extractEventsFromMeta(ld.ledgerMeta, ld.seq)
+				results <- ledgerResult{
+					seq:      ld.seq,
+					events:   events,
+					closedAt: closedAt,
+					err:      nil,
+				}
+			}
+		}()
+	}
+
+	// Producer: Read ledgers sequentially and send to workers
+	go func() {
+		for _, seq := range ledgers {
+			select {
+			case <-ctx.Done():
+				break
+			default:
+			}
+
+			// Check if already ingested
+			ingested, err := i.db.IsLedgerIngested(seq)
+			if err != nil {
+				log.Printf("Error checking ledger %d: %v", seq, err)
+				continue
+			}
+			if ingested {
+				// Still count as processed for progress
+				i.mu.Lock()
+				i.backfillCurrent++
+				i.mu.Unlock()
+				continue
+			}
+
+			ledgerMeta, err := i.backend.GetLedger(ctx, seq)
+			if err != nil {
+				log.Printf("Error getting ledger %d: %v", seq, err)
+				continue
+			}
+
+			ledgerChan <- ledgerData{seq: seq, ledgerMeta: ledgerMeta}
+		}
+		close(ledgerChan)
+	}()
+
+	// Close results when workers done
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results and batch write
+	var eventBatch []*database.Event
+	var ledgerMarks []database.LedgerMark
+
+	for result := range results {
+		if result.err != nil {
+			log.Printf("Error processing ledger %d: %v", result.seq, result.err)
+			continue
+		}
+
+		// Collect events
+		eventBatch = append(eventBatch, result.events...)
+		ledgerMarks = append(ledgerMarks, database.LedgerMark{
+			Sequence: result.seq,
+			ClosedAt: result.closedAt,
+		})
+
+		// Update stats
+		for _, e := range result.events {
+			i.mu.Lock()
+			switch e.EventType {
+			case "transfer":
+				i.statsTransfer++
+			case "mint":
+				i.statsMint++
+			case "burn":
+				i.statsBurn++
+			case "clawback":
+				i.statsClawback++
+			case "fee":
+				i.statsFee++
+			case "set_authorized":
+				i.statsSetAuthorized++
+			}
+			i.mu.Unlock()
+		}
+
+		// Batch write when we have enough
+		if len(ledgerMarks) >= batchSize {
+			if err := i.flushBatch(eventBatch, ledgerMarks); err != nil {
+				log.Printf("Error flushing batch: %v", err)
+			}
+			eventBatch = nil
+			ledgerMarks = nil
+		}
+
+		// Update progress
+		current := atomic.AddInt64(&processed, 1)
+		i.mu.Lock()
+		i.backfillCurrent++
+		total := i.backfillTotal
+		i.mu.Unlock()
+
+		if current%1000 == 0 || int(current) == len(ledgers) {
+			log.Printf("Backfill progress: %d/%d (%.1f%%)", i.backfillCurrent, total, float64(i.backfillCurrent)/float64(total)*100)
+		}
+	}
+
+	// Flush remaining
+	if len(ledgerMarks) > 0 {
+		if err := i.flushBatch(eventBatch, ledgerMarks); err != nil {
+			return fmt.Errorf("flushing final batch: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (i *Ingestor) flushBatch(events []*database.Event, ledgers []database.LedgerMark) error {
+	if err := i.db.InsertEventsBatch(events); err != nil {
+		return fmt.Errorf("inserting events batch: %w", err)
+	}
+	if err := i.db.MarkLedgersIngestedBatch(ledgers); err != nil {
+		return fmt.Errorf("marking ledgers ingested: %w", err)
+	}
+	return nil
+}
+
+// extractEventsFromMeta extracts events from already-fetched ledger meta
+func (i *Ingestor) extractEventsFromMeta(ledgerMeta xdr.LedgerCloseMeta, seq uint32) ([]*database.Event, time.Time) {
+	closedAt := time.Unix(ledgerMeta.LedgerCloseTime(), 0)
+
+	txReader, err := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(
+		i.cfg.NetworkPassphrase(),
+		ledgerMeta,
+	)
+	if err != nil {
+		log.Printf("Error creating tx reader for ledger %d: %v", seq, err)
+		return nil, closedAt
+	}
+
+	var events []*database.Event
+
+	for {
+		tx, err := txReader.Read()
+		if err != nil {
+			break // End of transactions
+		}
+
+		txCtx := EventContext{
+			LedgerSequence: seq,
+			TxHash:         tx.Result.TransactionHash.HexString(),
+			TxOrder:        GetTxOrderInLedger(tx),
+			OpIndex:        0,
+			ClosedAt:       closedAt,
+			Successful:     tx.Result.Successful(),
+		}
+
+		// Process V3 meta
+		if tx.UnsafeMeta.V == 3 && tx.UnsafeMeta.V3 != nil {
+			if sorobanMeta := tx.UnsafeMeta.V3.SorobanMeta; sorobanMeta != nil {
+				var eventIndex int32
+
+				for _, event := range sorobanMeta.Events {
+					txCtx.InSuccessfulTxn = true
+					if e := i.extractEvent(event, txCtx, eventIndex); e != nil {
+						events = append(events, e)
+					}
+					eventIndex++
+				}
+
+				for _, diagEvent := range sorobanMeta.DiagnosticEvents {
+					txCtx.InSuccessfulTxn = diagEvent.InSuccessfulContractCall
+					if e := i.extractEvent(diagEvent.Event, txCtx, eventIndex); e != nil {
+						events = append(events, e)
+					}
+					eventIndex++
+				}
+			}
+		}
+
+		// Process V4 meta (Protocol 23+)
+		if tx.UnsafeMeta.V == 4 && tx.UnsafeMeta.V4 != nil {
+			v4Meta := tx.UnsafeMeta.V4
+			var eventIndex int32
+
+			for _, txEvent := range v4Meta.Events {
+				txCtx.InSuccessfulTxn = true
+				if e := i.extractEvent(txEvent.Event, txCtx, eventIndex); e != nil {
+					events = append(events, e)
+				}
+				eventIndex++
+			}
+
+			for _, diagEvent := range v4Meta.DiagnosticEvents {
+				txCtx.InSuccessfulTxn = diagEvent.InSuccessfulContractCall
+				if e := i.extractEvent(diagEvent.Event, txCtx, eventIndex); e != nil {
+					events = append(events, e)
+				}
+				eventIndex++
+			}
+		}
+	}
+
+	return events, closedAt
+}
+
+func (i *Ingestor) extractEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) *database.Event {
+	eventType, isCAP67 := IsCAP67Event(event)
+	if !isCAP67 {
+		return nil
+	}
+
+	e, err := ParseEvent(eventType, event, ctx, eventIndex)
+	if err != nil {
+		log.Printf("Error parsing event: %v", err)
+		return nil
+	}
+	return e
 }
 
 func (i *Ingestor) continuousIngest(ctx context.Context, startLedger uint32) error {
