@@ -72,14 +72,10 @@ func ParseTransferEvent(event xdr.ContractEvent, ctx EventContext, eventIndex in
 		return nil, err
 	}
 
-	// CAP-67 has asset in 4th topic, SEP-41 uses contract ID as asset
+	// CAP-67 has asset in 4th topic, SEP-41 tokens don't include it
 	var asset string
 	if len(topics) >= 4 {
 		asset = extractAsset(topics[3])
-	}
-	// If no asset topic or empty, use contract ID as asset identifier
-	if asset == "" {
-		asset = ContractEventContractID(event)
 	}
 
 	amount, toMuxedID := extractAmountAndMuxedID(event.Body.V0.Data)
@@ -115,13 +111,10 @@ func ParseMintEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32)
 		return nil, err
 	}
 
-	// CAP-67 has asset in 3rd topic, SEP-41 uses contract ID as asset
+	// CAP-67 has asset in 3rd topic, SEP-41 tokens don't include it
 	var asset string
 	if len(topics) >= 3 {
 		asset = extractAsset(topics[2])
-	}
-	if asset == "" {
-		asset = ContractEventContractID(event)
 	}
 
 	amount, toMuxedID := extractAmountAndMuxedID(event.Body.V0.Data)
@@ -156,13 +149,10 @@ func ParseBurnEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32)
 		return nil, err
 	}
 
-	// CAP-67 has asset in 3rd topic, SEP-41 uses contract ID as asset
+	// CAP-67 has asset in 3rd topic, SEP-41 tokens don't include it
 	var asset string
 	if len(topics) >= 3 {
 		asset = extractAsset(topics[2])
-	}
-	if asset == "" {
-		asset = ContractEventContractID(event)
 	}
 
 	amount, _ := DecodeI128(event.Body.V0.Data)
@@ -196,13 +186,10 @@ func ParseClawbackEvent(event xdr.ContractEvent, ctx EventContext, eventIndex in
 		return nil, err
 	}
 
-	// CAP-67 has asset in 3rd topic, SEP-41 uses contract ID as asset
+	// CAP-67 has asset in 3rd topic, SEP-41 tokens don't include it
 	var asset string
 	if len(topics) >= 3 {
 		asset = extractAsset(topics[2])
-	}
-	if asset == "" {
-		asset = ContractEventContractID(event)
 	}
 
 	amount, _ := DecodeI128(event.Body.V0.Data)
@@ -265,13 +252,10 @@ func ParseSetAuthorizedEvent(event xdr.ContractEvent, ctx EventContext, eventInd
 		return nil, err
 	}
 
-	// CAP-67 has asset in 3rd topic, SEP-41 uses contract ID as asset
+	// CAP-67 has asset in 3rd topic, SEP-41 tokens don't include it
 	var asset string
 	if len(topics) >= 3 {
 		asset = extractAsset(topics[2])
-	}
-	if asset == "" {
-		asset = ContractEventContractID(event)
 	}
 
 	authorized, _ := DecodeBool(event.Body.V0.Data)
