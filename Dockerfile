@@ -13,7 +13,7 @@ RUN go mod download
 COPY . .
 
 # Build with CGO for SQLite
-RUN CGO_ENABLED=1 go build -o cap67db ./cmd/server
+RUN CGO_ENABLED=1 GOTOOLCHAIN=auto go build -o cap67db ./cmd/server
 
 # Runtime stage
 FROM alpine:3.19
