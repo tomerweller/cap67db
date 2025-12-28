@@ -1,6 +1,8 @@
 module github.com/stellar/cap67db
 
-go 1.23
+go 1.24.0
+
+toolchain go1.24.11
 
 require (
 	github.com/mattn/go-sqlite3 v1.14.32
