@@ -1,0 +1,309 @@
+package ingestor
+
+import (
+	"time"
+
+	"github.com/stellar/cap67db/internal/database"
+	"github.com/stellar/go/ingest"
+	"github.com/stellar/go/xdr"
+)
+
+// CAP-67 event types
+var cap67EventTypes = map[string]bool{
+	"transfer":       true,
+	"mint":           true,
+	"burn":           true,
+	"clawback":       true,
+	"fee":            true,
+	"set_authorized": true,
+}
+
+// EventContext contains transaction and ledger context for an event.
+type EventContext struct {
+	LedgerSequence  uint32
+	TxHash          string
+	TxOrder         int32  // 1-based position in ledger
+	OpIndex         int32  // 1-based, 0 for tx-level events
+	ClosedAt        time.Time
+	Successful      bool
+	InSuccessfulTxn bool
+}
+
+// IsCAP67Event checks if an event matches a CAP-67 event type.
+// Returns the event type string and true if it matches.
+func IsCAP67Event(event xdr.ContractEvent) (string, bool) {
+	if event.Body.V0 == nil || len(event.Body.V0.Topics) == 0 {
+		return "", false
+	}
+
+	firstTopic := event.Body.V0.Topics[0]
+
+	// Check if first topic is a Symbol
+	if firstTopic.Type != xdr.ScValTypeScvSymbol {
+		return "", false
+	}
+
+	symbol := string(*firstTopic.Sym)
+
+	if cap67EventTypes[symbol] {
+		return symbol, true
+	}
+
+	return "", false
+}
+
+// ParseTransferEvent parses a CAP-67 transfer event.
+// Transfer topics: [Symbol("transfer"), Address(from), Address(to), Bytes/String(asset)]
+// Transfer data: i128(amount) or struct { amount: i128, to_muxed_id?: ... }
+func ParseTransferEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.TransferEvent, error) {
+	topics := event.Body.V0.Topics
+	if len(topics) < 4 {
+		return nil, nil // Not enough topics for transfer
+	}
+
+	from, err := DecodeAddress(topics[1])
+	if err != nil {
+		return nil, err
+	}
+
+	to, err := DecodeAddress(topics[2])
+	if err != nil {
+		return nil, err
+	}
+
+	asset := extractAsset(topics[3])
+
+	amount, toMuxedID := extractAmountAndMuxedID(event.Body.V0.Data)
+
+	return &database.TransferEvent{
+		ID:              database.MakeEventID(ctx.LedgerSequence, ctx.TxOrder, ctx.OpIndex, eventIndex),
+		LedgerSequence:  ctx.LedgerSequence,
+		TxHash:          ctx.TxHash,
+		ClosedAt:        ctx.ClosedAt,
+		Successful:      ctx.Successful,
+		InSuccessfulTxn: ctx.InSuccessfulTxn,
+		ContractID:      ContractEventContractID(event),
+		FromAddress:     from,
+		ToAddress:       to,
+		Asset:           asset,
+		Amount:          amount,
+		ToMuxedID:       toMuxedID,
+	}, nil
+}
+
+// ParseMintEvent parses a CAP-67 mint event.
+// Mint topics: [Symbol("mint"), Address(to), Bytes/String(asset)]
+// Mint data: i128(amount) or struct { amount: i128, to_muxed_id?: ... }
+func ParseMintEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.MintEvent, error) {
+	topics := event.Body.V0.Topics
+	if len(topics) < 3 {
+		return nil, nil
+	}
+
+	to, err := DecodeAddress(topics[1])
+	if err != nil {
+		return nil, err
+	}
+
+	asset := extractAsset(topics[2])
+	amount, toMuxedID := extractAmountAndMuxedID(event.Body.V0.Data)
+
+	return &database.MintEvent{
+		ID:              database.MakeEventID(ctx.LedgerSequence, ctx.TxOrder, ctx.OpIndex, eventIndex),
+		LedgerSequence:  ctx.LedgerSequence,
+		TxHash:          ctx.TxHash,
+		ClosedAt:        ctx.ClosedAt,
+		Successful:      ctx.Successful,
+		InSuccessfulTxn: ctx.InSuccessfulTxn,
+		ContractID:      ContractEventContractID(event),
+		ToAddress:       to,
+		Asset:           asset,
+		Amount:          amount,
+		ToMuxedID:       toMuxedID,
+	}, nil
+}
+
+// ParseBurnEvent parses a CAP-67 burn event.
+// Burn topics: [Symbol("burn"), Address(from), Bytes/String(asset)]
+// Burn data: i128(amount)
+func ParseBurnEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.BurnEvent, error) {
+	topics := event.Body.V0.Topics
+	if len(topics) < 3 {
+		return nil, nil
+	}
+
+	from, err := DecodeAddress(topics[1])
+	if err != nil {
+		return nil, err
+	}
+
+	asset := extractAsset(topics[2])
+
+	amount, _ := DecodeI128(event.Body.V0.Data)
+
+	return &database.BurnEvent{
+		ID:              database.MakeEventID(ctx.LedgerSequence, ctx.TxOrder, ctx.OpIndex, eventIndex),
+		LedgerSequence:  ctx.LedgerSequence,
+		TxHash:          ctx.TxHash,
+		ClosedAt:        ctx.ClosedAt,
+		Successful:      ctx.Successful,
+		InSuccessfulTxn: ctx.InSuccessfulTxn,
+		ContractID:      ContractEventContractID(event),
+		FromAddress:     from,
+		Asset:           asset,
+		Amount:          amount,
+	}, nil
+}
+
+// ParseClawbackEvent parses a CAP-67 clawback event.
+// Clawback topics: [Symbol("clawback"), Address(from), Bytes/String(asset)]
+// Clawback data: i128(amount)
+func ParseClawbackEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.ClawbackEvent, error) {
+	topics := event.Body.V0.Topics
+	if len(topics) < 3 {
+		return nil, nil
+	}
+
+	from, err := DecodeAddress(topics[1])
+	if err != nil {
+		return nil, err
+	}
+
+	asset := extractAsset(topics[2])
+
+	amount, _ := DecodeI128(event.Body.V0.Data)
+
+	return &database.ClawbackEvent{
+		ID:              database.MakeEventID(ctx.LedgerSequence, ctx.TxOrder, ctx.OpIndex, eventIndex),
+		LedgerSequence:  ctx.LedgerSequence,
+		TxHash:          ctx.TxHash,
+		ClosedAt:        ctx.ClosedAt,
+		Successful:      ctx.Successful,
+		InSuccessfulTxn: ctx.InSuccessfulTxn,
+		ContractID:      ContractEventContractID(event),
+		FromAddress:     from,
+		Asset:           asset,
+		Amount:          amount,
+	}, nil
+}
+
+// ParseFeeEvent parses a CAP-67 fee event.
+// Fee topics: [Symbol("fee"), Address(from)]
+// Fee data: i128(amount) - positive for charge, negative for refund
+func ParseFeeEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.FeeEvent, error) {
+	topics := event.Body.V0.Topics
+	if len(topics) < 2 {
+		return nil, nil
+	}
+
+	from, err := DecodeAddress(topics[1])
+	if err != nil {
+		return nil, err
+	}
+
+	amount, _ := DecodeI128(event.Body.V0.Data)
+
+	return &database.FeeEvent{
+		ID:              database.MakeEventID(ctx.LedgerSequence, ctx.TxOrder, ctx.OpIndex, eventIndex),
+		LedgerSequence:  ctx.LedgerSequence,
+		TxHash:          ctx.TxHash,
+		ClosedAt:        ctx.ClosedAt,
+		Successful:      ctx.Successful,
+		InSuccessfulTxn: ctx.InSuccessfulTxn,
+		ContractID:      ContractEventContractID(event),
+		FromAddress:     from,
+		Amount:          amount,
+	}, nil
+}
+
+// ParseSetAuthorizedEvent parses a CAP-67 set_authorized event.
+// SetAuthorized topics: [Symbol("set_authorized"), Address(address), Bytes/String(asset)]
+// SetAuthorized data: bool(authorized)
+func ParseSetAuthorizedEvent(event xdr.ContractEvent, ctx EventContext, eventIndex int32) (*database.SetAuthorizedEvent, error) {
+	topics := event.Body.V0.Topics
+	if len(topics) < 3 {
+		return nil, nil
+	}
+
+	addr, err := DecodeAddress(topics[1])
+	if err != nil {
+		return nil, err
+	}
+
+	asset := extractAsset(topics[2])
+
+	authorized, _ := DecodeBool(event.Body.V0.Data)
+
+	return &database.SetAuthorizedEvent{
+		ID:              database.MakeEventID(ctx.LedgerSequence, ctx.TxOrder, ctx.OpIndex, eventIndex),
+		LedgerSequence:  ctx.LedgerSequence,
+		TxHash:          ctx.TxHash,
+		ClosedAt:        ctx.ClosedAt,
+		Successful:      ctx.Successful,
+		InSuccessfulTxn: ctx.InSuccessfulTxn,
+		ContractID:      ContractEventContractID(event),
+		Address:         addr,
+		Asset:           asset,
+		Authorized:      authorized,
+	}, nil
+}
+
+// extractAsset extracts the asset string from an ScVal (bytes or string).
+func extractAsset(val xdr.ScVal) string {
+	switch val.Type {
+	case xdr.ScValTypeScvString:
+		if val.Str != nil {
+			return string(*val.Str)
+		}
+	case xdr.ScValTypeScvBytes:
+		if val.Bytes != nil {
+			// For Stellar Asset Contract events, this is typically "native" or "CODE:ISSUER"
+			return string(*val.Bytes)
+		}
+	case xdr.ScValTypeScvSymbol:
+		if val.Sym != nil {
+			return string(*val.Sym)
+		}
+	}
+	return ""
+}
+
+// extractAmountAndMuxedID extracts the amount and optional muxed ID from event data.
+func extractAmountAndMuxedID(data xdr.ScVal) (string, *string) {
+	// If it's directly an i128, just return the amount
+	if data.Type == xdr.ScValTypeScvI128 {
+		amount, _ := DecodeI128(data)
+		return amount, nil
+	}
+
+	// If it's a map/struct, look for "amount" and "to_muxed_id" fields
+	if data.Type == xdr.ScValTypeScvMap && data.Map != nil {
+		var amount string
+		var muxedID *string
+
+		scMap := *data.Map
+		for i := 0; i < len(*scMap); i++ {
+			entry := (*scMap)[i]
+			key := ""
+			if entry.Key.Type == xdr.ScValTypeScvSymbol && entry.Key.Sym != nil {
+				key = string(*entry.Key.Sym)
+			}
+
+			switch key {
+			case "amount":
+				amount, _ = DecodeI128(entry.Val)
+			case "to_muxed_id":
+				muxedID = DecodeMuxedID(entry.Val)
+			}
+		}
+		return amount, muxedID
+	}
+
+	return "", nil
+}
+
+// GetTxOrderInLedger returns the 1-based position of a transaction in the ledger.
+func GetTxOrderInLedger(tx ingest.LedgerTransaction) int32 {
+	// LedgerTransaction.Index is 0-based, TOID uses 1-based
+	return int32(tx.Index) + 1
+}
