@@ -544,7 +544,7 @@ func (i *Ingestor) continuousIngest(ctx context.Context, startLedger uint32) err
 			state, _ := i.db.GetIngestionState()
 			if state != nil {
 				state.LatestLedger = seq
-				i.db.UpdateIngestionState(state)
+				_ = i.db.UpdateIngestionState(state)
 			}
 		}
 

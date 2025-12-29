@@ -164,7 +164,7 @@ func (db *DB) InsertEventsBatch(events []*Event) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.Prepare(`
 		INSERT OR IGNORE INTO events
@@ -198,7 +198,7 @@ func (db *DB) MarkLedgersIngestedBatch(ledgers []LedgerMark) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.Prepare(`
 		INSERT OR IGNORE INTO ingested_ledgers (ledger_sequence, closed_at, ingested_at)

@@ -66,7 +66,7 @@ func (c *Cleaner) cleanup() {
 		`).Scan(&earliest)
 		if err == nil && earliest > 0 {
 			state.EarliestLedger = earliest
-			c.db.UpdateIngestionState(state)
+			_ = c.db.UpdateIngestionState(state)
 		}
 	}
 

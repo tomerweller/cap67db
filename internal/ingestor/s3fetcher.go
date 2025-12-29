@@ -26,6 +26,7 @@ type S3LedgerFetcher struct {
 	network    string // pubnet, testnet, futurenet
 	httpClient *http.Client
 	decoder    *zstd.Decoder
+	baseURL    string // defaults to s3BaseURL, can be overridden for testing
 }
 
 // NewS3LedgerFetcher creates a new S3 ledger fetcher.
@@ -41,6 +42,7 @@ func NewS3LedgerFetcher(network string) (*S3LedgerFetcher, error) {
 			Timeout: 30 * time.Second,
 		},
 		decoder: decoder,
+		baseURL: s3BaseURL,
 	}, nil
 }
 
@@ -104,7 +106,7 @@ func (f *S3LedgerFetcher) buildURL(seq uint32) string {
 
 	// Build URL: {base}/{network}/{partitionHex}--{start}-{end}/{ledgerHex}--{seq}.xdr.zst
 	return fmt.Sprintf("%s/%s/%s--%d-%d/%s--%d.xdr.zst",
-		s3BaseURL,
+		f.baseURL,
 		f.network,
 		partitionHex, partitionStart, partitionEnd,
 		ledgerHex, seq,

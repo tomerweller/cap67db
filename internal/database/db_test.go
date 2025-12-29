@@ -300,10 +300,18 @@ func TestDeleteOldEvents(t *testing.T) {
 		Account:         "G...",
 	}
 
-	db.InsertEvent(oldEvent)
-	db.InsertEvent(recentEvent)
-	db.MarkLedgerIngested(100, oldTime)
-	db.MarkLedgerIngested(200, recentTime)
+	if err := db.InsertEvent(oldEvent); err != nil {
+		t.Fatalf("InsertEvent(old) error: %v", err)
+	}
+	if err := db.InsertEvent(recentEvent); err != nil {
+		t.Fatalf("InsertEvent(recent) error: %v", err)
+	}
+	if err := db.MarkLedgerIngested(100, oldTime); err != nil {
+		t.Fatalf("MarkLedgerIngested(100) error: %v", err)
+	}
+	if err := db.MarkLedgerIngested(200, recentTime); err != nil {
+		t.Fatalf("MarkLedgerIngested(200) error: %v", err)
+	}
 
 	// Delete events older than 7 days
 	if err := db.DeleteOldEvents(7); err != nil {
@@ -312,13 +320,17 @@ func TestDeleteOldEvents(t *testing.T) {
 
 	// Old event should be deleted
 	var count int
-	db.conn.QueryRow("SELECT COUNT(*) FROM events WHERE id = ?", oldEvent.ID).Scan(&count)
+	if err := db.conn.QueryRow("SELECT COUNT(*) FROM events WHERE id = ?", oldEvent.ID).Scan(&count); err != nil {
+		t.Fatalf("QueryRow(old) error: %v", err)
+	}
 	if count != 0 {
 		t.Error("Old event should be deleted")
 	}
 
 	// Recent event should remain
-	db.conn.QueryRow("SELECT COUNT(*) FROM events WHERE id = ?", recentEvent.ID).Scan(&count)
+	if err := db.conn.QueryRow("SELECT COUNT(*) FROM events WHERE id = ?", recentEvent.ID).Scan(&count); err != nil {
+		t.Fatalf("QueryRow(recent) error: %v", err)
+	}
 	if count != 1 {
 		t.Error("Recent event should remain")
 	}
