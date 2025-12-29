@@ -9,7 +9,6 @@ type Config struct {
 	Port          int
 	DatabasePath  string
 	RetentionDays int
-	AWSRegion     string
 	LogLevel      string
 	Network       string // pubnet, testnet, futurenet
 	RPCURL        string // Stellar RPC URL
@@ -22,7 +21,6 @@ func Load() *Config {
 		Port:          getEnvInt("PORT", 8080),
 		DatabasePath:  getEnv("DATABASE_PATH", "./cap67.db"),
 		RetentionDays: getEnvInt("RETENTION_DAYS", 7),
-		AWSRegion:     getEnv("AWS_REGION", "us-east-2"),
 		LogLevel:      getEnv("LOG_LEVEL", "info"),
 		Network:       getEnv("STELLAR_NETWORK", "pubnet"),
 		RPCURL:        getEnv("STELLAR_RPC_URL", ""),

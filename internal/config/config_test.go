@@ -7,7 +7,7 @@ import (
 
 func TestLoad_Defaults(t *testing.T) {
 	// Clear any existing env vars
-	envVars := []string{"PORT", "DATABASE_PATH", "RETENTION_DAYS", "AWS_REGION", "LOG_LEVEL", "STELLAR_NETWORK", "STELLAR_RPC_URL", "INGEST_WORKERS", "INGEST_BATCH_SIZE"}
+	envVars := []string{"PORT", "DATABASE_PATH", "RETENTION_DAYS", "LOG_LEVEL", "STELLAR_NETWORK", "STELLAR_RPC_URL", "INGEST_WORKERS", "INGEST_BATCH_SIZE"}
 	for _, v := range envVars {
 		os.Unsetenv(v)
 	}
@@ -22,9 +22,6 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 	if cfg.RetentionDays != 7 {
 		t.Errorf("RetentionDays = %d; want 7", cfg.RetentionDays)
-	}
-	if cfg.AWSRegion != "us-east-2" {
-		t.Errorf("AWSRegion = %s; want us-east-2", cfg.AWSRegion)
 	}
 	if cfg.LogLevel != "info" {
 		t.Errorf("LogLevel = %s; want info", cfg.LogLevel)
