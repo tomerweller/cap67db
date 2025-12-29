@@ -18,10 +18,14 @@ type DB struct {
 }
 
 func Open(path string) (*DB, error) {
-	conn, err := sql.Open("sqlite3", path+"?_journal_mode=WAL&_busy_timeout=5000")
+	// Use longer busy_timeout (60s) and immediate transaction locking to avoid lock contention
+	conn, err := sql.Open("sqlite3", path+"?_journal_mode=WAL&_busy_timeout=60000&_txlock=immediate&_synchronous=NORMAL")
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
+
+	// Limit to single writer connection to prevent lock contention
+	conn.SetMaxOpenConns(1)
 
 	db := &DB{conn: conn}
 	if err := db.migrate(); err != nil {

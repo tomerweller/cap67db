@@ -36,9 +36,10 @@ CREATE TABLE IF NOT EXISTS events (
     authorized BOOLEAN
 );
 
-CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
 CREATE INDEX IF NOT EXISTS idx_events_ledger ON events(ledger_sequence);
 CREATE INDEX IF NOT EXISTS idx_events_closed_at ON events(closed_at);
 CREATE INDEX IF NOT EXISTS idx_events_contract ON events(contract_id);
+CREATE INDEX IF NOT EXISTS idx_events_contract_id ON events(contract_id, id);
 CREATE INDEX IF NOT EXISTS idx_events_account ON events(account);
+CREATE INDEX IF NOT EXISTS idx_events_account_id ON events(account, id);
 CREATE INDEX IF NOT EXISTS idx_events_to_account ON events(to_account) WHERE to_account IS NOT NULL;

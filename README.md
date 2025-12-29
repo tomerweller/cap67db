@@ -56,12 +56,12 @@ The service reads ledger data from the [AWS Public Blockchain Data](https://regi
 
 ```
 ┌─────────────┐    ┌──────────────┐    ┌─────────────┐    ┌──────────┐
-│   S3 Data   │───▶│   Producer   │───▶│   Workers   │───▶│  SQLite  │
-│    Lake     │    │  (sequential)│    │  (parallel) │    │  (batch) │
+│   S3 Data   │───▶│   Parallel   │───▶│   Workers   │───▶│  SQLite  │
+│    Lake     │    │   Fetchers   │    │  (parallel) │    │  (batch) │
 └─────────────┘    └──────────────┘    └─────────────┘    └──────────┘
 ```
 
-1. **Producer**: A single goroutine reads ledgers sequentially from S3 using the `BufferedStorageBackend` (which requires sequential access). It buffers ahead to minimize wait time.
+1. **Parallel S3 Fetchers**: Multiple goroutines (up to 20) fetch ledgers concurrently from S3 using direct HTTP requests. Unlike the BufferedStorageBackend, this allows random-access fetching which enables parallel backfill and gap-filling. Each ledger file is fetched, zstd-decompressed, and XDR-decoded independently.
 
 2. **Workers**: Multiple worker goroutines (default: 4) process ledger data in parallel:
    - Parse XDR transaction metadata
@@ -75,20 +75,20 @@ The service reads ledger data from the [AWS Public Blockchain Data](https://regi
 
 | Metric | Value |
 |--------|-------|
-| Backfill speed | ~100 ledgers/sec |
-| 7-day backfill | ~3 hours |
+| Backfill speed | ~150-200 ledgers/sec |
+| 7-day backfill | ~2 hours |
 | Database size | ~3.5 GB/day |
 | Memory usage | ~200 MB |
 
-**Bottleneck**: S3 network latency dominates processing time. The parallel workers ensure CPU is utilized while waiting for S3 responses, but adding more workers beyond 4 provides diminishing returns.
+**Bottleneck**: S3 network latency dominates processing time. Parallel S3 fetching (up to 20 concurrent requests) hides this latency by fetching multiple ledgers simultaneously.
 
 ### Optimizations
 
-- **Producer-consumer pattern**: Decouples S3 I/O from CPU-bound XDR parsing
+- **Parallel S3 fetching**: Up to 20 concurrent HTTP requests fetch ledgers in parallel, hiding network latency
+- **Random-access S3**: Direct HTTP fetching enables out-of-order ledger retrieval for efficient gap-filling
 - **Batch database writes**: Reduces SQLite transaction overhead by 100x
 - **Prepared statements**: Reuses compiled SQL for insert performance
 - **WAL mode**: Enables concurrent reads during writes
-- **Buffered S3 backend**: Pre-fetches ledgers to hide network latency
 
 ## API Endpoints
 

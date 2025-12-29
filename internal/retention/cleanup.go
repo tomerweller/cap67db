@@ -29,8 +29,9 @@ func (c *Cleaner) Run(ctx context.Context) {
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
 
-	// Run once at startup
-	c.cleanup()
+	// Don't run cleanup at startup - it can block database for long time
+	// Let it run on the regular interval instead
+	log.Printf("Cleanup scheduled to run every %v (skipping startup run)", c.interval)
 
 	for {
 		select {

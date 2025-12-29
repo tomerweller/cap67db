@@ -11,7 +11,6 @@ import (
 
 // EventQueryParams holds query parameters for the events endpoint.
 type EventQueryParams struct {
-	Types       []string // Event types to filter by
 	ContractID  *string
 	Account     *string // Searches both account and to_account
 	StartLedger *uint32
@@ -33,10 +32,6 @@ func parseEventQueryParams(r *http.Request) EventQueryParams {
 		if i, err := strconv.Atoi(v); err == nil && i > 0 && i <= 1000 {
 			params.Limit = i
 		}
-	}
-
-	if v := q.Get("type"); v != "" {
-		params.Types = strings.Split(v, ",")
 	}
 
 	if v := q.Get("contract_id"); v != "" {
@@ -74,20 +69,16 @@ func parseEventQueryParams(r *http.Request) EventQueryParams {
 
 // listEvents handles GET /events
 func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
+	// Check if service is ready (backfill complete)
+	if s.ingestor != nil && !s.ingestor.IsReady() {
+		s.errorResponse(w, http.StatusServiceUnavailable, "service is initializing, please try again later")
+		return
+	}
+
 	params := parseEventQueryParams(r)
 
 	var conditions []string
 	var args []interface{}
-
-	// Event type filter
-	if len(params.Types) > 0 {
-		placeholders := make([]string, len(params.Types))
-		for i, t := range params.Types {
-			placeholders[i] = "?"
-			args = append(args, t)
-		}
-		conditions = append(conditions, fmt.Sprintf("event_type IN (%s)", strings.Join(placeholders, ",")))
-	}
 
 	// Contract filter
 	if params.ContractID != nil {

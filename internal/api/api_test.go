@@ -60,9 +60,6 @@ func TestParseEventQueryParams_Defaults(t *testing.T) {
 	if params.Order != "asc" {
 		t.Errorf("Default Order = %s; want asc", params.Order)
 	}
-	if len(params.Types) != 0 {
-		t.Errorf("Default Types should be empty")
-	}
 	if params.ContractID != nil {
 		t.Errorf("Default ContractID should be nil")
 	}
@@ -72,7 +69,7 @@ func TestParseEventQueryParams_Defaults(t *testing.T) {
 }
 
 func TestParseEventQueryParams_WithValues(t *testing.T) {
-	req := httptest.NewRequest("GET", "/events?type=transfer,mint&contract_id=CTEST&account=GTEST&start_ledger=1000&end_ledger=2000&cursor=abc&limit=50&order=desc", nil)
+	req := httptest.NewRequest("GET", "/events?contract_id=CTEST&account=GTEST&start_ledger=1000&end_ledger=2000&cursor=abc&limit=50&order=desc", nil)
 	params := parseEventQueryParams(req)
 
 	if params.Limit != 50 {
@@ -80,9 +77,6 @@ func TestParseEventQueryParams_WithValues(t *testing.T) {
 	}
 	if params.Order != "desc" {
 		t.Errorf("Order = %s; want desc", params.Order)
-	}
-	if len(params.Types) != 2 || params.Types[0] != "transfer" || params.Types[1] != "mint" {
-		t.Errorf("Types = %v; want [transfer, mint]", params.Types)
 	}
 	if params.ContractID == nil || *params.ContractID != "CTEST" {
 		t.Errorf("ContractID = %v; want CTEST", params.ContractID)
@@ -238,55 +232,6 @@ func TestListEvents_WithData(t *testing.T) {
 	}
 	if eventsResp.Cursor == "" {
 		t.Error("Expected non-empty cursor")
-	}
-}
-
-func TestListEvents_FilterByType(t *testing.T) {
-	db, err := database.Open(":memory:")
-	if err != nil {
-		t.Fatalf("Failed to open database: %v", err)
-	}
-	defer db.Close()
-
-	// Insert mixed event types
-	eventTypes := []string{"transfer", "mint", "burn", "transfer", "mint"}
-	for i, et := range eventTypes {
-		event := &database.Event{
-			ID:              database.MakeEventID(1000, int32(i+1), 0, 0),
-			EventType:       et,
-			LedgerSequence:  1000,
-			TxHash:          "hash",
-			ClosedAt:        time.Now(),
-			Successful:      true,
-			InSuccessfulTxn: true,
-			ContractID:      "CCONTRACT...",
-			Account:         "GACCOUNT...",
-		}
-		db.InsertEvent(event)
-	}
-
-	cfg := &config.Config{RetentionDays: 7}
-	s := &Server{
-		cfg: cfg,
-		db:  db,
-		mux: http.NewServeMux(),
-	}
-
-	req := httptest.NewRequest("GET", "/events?type=transfer", nil)
-	w := httptest.NewRecorder()
-
-	s.listEvents(w, req)
-
-	var eventsResp EventsResponse
-	json.NewDecoder(w.Result().Body).Decode(&eventsResp)
-
-	if len(eventsResp.Events) != 2 {
-		t.Errorf("Expected 2 transfer events, got %d", len(eventsResp.Events))
-	}
-	for _, e := range eventsResp.Events {
-		if e.EventType != "transfer" {
-			t.Errorf("Expected transfer event, got %s", e.EventType)
-		}
 	}
 }
 

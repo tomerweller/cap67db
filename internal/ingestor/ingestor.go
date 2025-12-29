@@ -14,8 +14,6 @@ import (
 	"github.com/stellar/cap67db/internal/config"
 	"github.com/stellar/cap67db/internal/database"
 	"github.com/stellar/go/ingest"
-	"github.com/stellar/go/ingest/ledgerbackend"
-	"github.com/stellar/go/support/datastore"
 	"github.com/stellar/go/xdr"
 )
 
@@ -24,7 +22,7 @@ import (
 type Ingestor struct {
 	cfg     *config.Config
 	db      *database.DB
-	backend ledgerbackend.LedgerBackend
+	fetcher *S3LedgerFetcher
 
 	mu              sync.RWMutex
 	isReady         bool
@@ -32,60 +30,33 @@ type Ingestor struct {
 	backfillCurrent int
 
 	// Stats
-	statsTransfer       int64
-	statsMint           int64
-	statsBurn           int64
-	statsClawback       int64
-	statsFee            int64
-	statsSetAuthorized  int64
+	statsTransfer      int64
+	statsMint          int64
+	statsBurn          int64
+	statsClawback      int64
+	statsFee           int64
+	statsSetAuthorized int64
 }
 
 // New creates a new Ingestor.
 func New(cfg *config.Config, db *database.DB) (*Ingestor, error) {
-	ctx := context.Background()
-
-	// Create the S3 datastore
-	datastoreConfig := datastore.DataStoreConfig{
-		Type: "S3",
-		Params: map[string]string{
-			"destination_bucket_path": cfg.S3BucketPath(),
-			"region":                  cfg.AWSRegion,
-		},
-		Schema: datastore.DataStoreSchema{
-			LedgersPerFile:    1,
-			FilesPerPartition: 64000,
-		},
-	}
-
-	ds, err := datastore.NewDataStore(ctx, datastoreConfig)
+	// Create direct S3 fetcher (bypasses BufferedStorageBackend)
+	fetcher, err := NewS3LedgerFetcher(cfg.Network)
 	if err != nil {
-		return nil, fmt.Errorf("creating datastore: %w", err)
-	}
-
-	// Create buffered storage backend
-	backendConfig := ledgerbackend.BufferedStorageBackendConfig{
-		BufferSize: 100,
-		NumWorkers: 10,
-		RetryLimit: 3,
-		RetryWait:  5 * time.Second,
-	}
-
-	backend, err := ledgerbackend.NewBufferedStorageBackend(backendConfig, ds, datastoreConfig.Schema)
-	if err != nil {
-		ds.Close()
-		return nil, fmt.Errorf("creating backend: %w", err)
+		return nil, fmt.Errorf("creating S3 fetcher: %w", err)
 	}
 
 	return &Ingestor{
 		cfg:     cfg,
 		db:      db,
-		backend: backend,
+		fetcher: fetcher,
 	}, nil
 }
 
 // Close shuts down the ingestor.
 func (i *Ingestor) Close() error {
-	return i.backend.Close()
+	i.fetcher.Close()
+	return nil
 }
 
 // IsReady returns whether the ingestor has completed backfill.
@@ -157,6 +128,12 @@ func (i *Ingestor) Run(ctx context.Context) error {
 		if err := i.db.UpdateIngestionState(state); err != nil {
 			return fmt.Errorf("initializing state: %w", err)
 		}
+	} else {
+		// Reset ready state - will be set true after backfill completes
+		state.IsReady = false
+		if err := i.db.UpdateIngestionState(state); err != nil {
+			return fmt.Errorf("resetting ready state: %w", err)
+		}
 	}
 
 	// Find missing ledgers
@@ -209,28 +186,50 @@ func (i *Ingestor) backfill(ctx context.Context, ledgers []uint32) error {
 		return nil
 	}
 
-	// Process in chunks
-	chunkSize := 1000
-	for chunkStart := 0; chunkStart < len(ledgers); chunkStart += chunkSize {
-		chunkEnd := chunkStart + chunkSize
-		if chunkEnd > len(ledgers) {
-			chunkEnd = len(ledgers)
+	// Track ledgers that need processing
+	remaining := make([]uint32, len(ledgers))
+	copy(remaining, ledgers)
+
+	maxRetries := 5
+	baseWait := 30 * time.Second
+
+	for attempt := 0; attempt < maxRetries && len(remaining) > 0; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff between retry rounds
+			waitTime := baseWait * time.Duration(1<<(attempt-1)) // 30s, 60s, 120s, 240s
+			log.Printf("Retry attempt %d/%d for %d failed ledgers, waiting %v...", attempt+1, maxRetries, len(remaining), waitTime)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(waitTime):
+			}
 		}
 
-		chunk := ledgers[chunkStart:chunkEnd]
-		startSeq := chunk[0]
-		endSeq := chunk[len(chunk)-1]
+		// Process in chunks using direct S3 fetching (no PrepareRange needed)
+		chunkSize := 1000
+		var failed []uint32
 
-		// Prepare range for all ledgers in chunk
-		ledgerRange := ledgerbackend.BoundedRange(startSeq, endSeq)
-		if err := i.backend.PrepareRange(ctx, ledgerRange); err != nil {
-			return fmt.Errorf("preparing range %d-%d: %w", startSeq, endSeq, err)
+		for chunkStart := 0; chunkStart < len(remaining); chunkStart += chunkSize {
+			chunkEnd := chunkStart + chunkSize
+			if chunkEnd > len(remaining) {
+				chunkEnd = len(remaining)
+			}
+
+			chunk := remaining[chunkStart:chunkEnd]
+
+			// Process chunk with parallel S3 fetching
+			chunkFailed, err := i.processChunkParallel(ctx, chunk)
+			if err != nil {
+				return err
+			}
+			failed = append(failed, chunkFailed...)
 		}
 
-		// Process chunk with parallel workers
-		if err := i.processChunkParallel(ctx, chunk); err != nil {
-			return err
-		}
+		remaining = failed
+	}
+
+	if len(remaining) > 0 {
+		return fmt.Errorf("backfill incomplete: %d ledgers failed after %d retries", len(remaining), maxRetries)
 	}
 
 	return nil
@@ -242,9 +241,42 @@ type ledgerData struct {
 	ledgerMeta xdr.LedgerCloseMeta
 }
 
-func (i *Ingestor) processChunkParallel(ctx context.Context, ledgers []uint32) error {
+func (i *Ingestor) processChunkParallel(ctx context.Context, ledgers []uint32) ([]uint32, error) {
 	numWorkers := i.cfg.IngestWorkers
 	batchSize := i.cfg.IngestBatch
+
+	// Filter out already-ingested ledgers first
+	var toFetch []uint32
+	for _, seq := range ledgers {
+		ingested, err := i.db.IsLedgerIngested(seq)
+		if err != nil {
+			log.Printf("Error checking ledger %d: %v", seq, err)
+			continue
+		}
+		if ingested {
+			i.mu.Lock()
+			i.backfillCurrent++
+			i.mu.Unlock()
+			continue
+		}
+		toFetch = append(toFetch, seq)
+	}
+
+	if len(toFetch) == 0 {
+		return nil, nil
+	}
+
+	// Fetch ledgers in parallel using S3LedgerFetcher's batch method
+	// Use more workers for fetching since it's I/O bound
+	fetchWorkers := numWorkers * 2
+	if fetchWorkers > 20 {
+		fetchWorkers = 20
+	}
+	fetchedMetas, fetchFailed := i.fetcher.GetLedgerBatch(toFetch, fetchWorkers)
+
+	if len(fetchFailed) > 0 {
+		log.Printf("Failed to fetch %d ledgers", len(fetchFailed))
+	}
 
 	// Channel for raw ledger data (producer -> workers)
 	ledgerChan := make(chan ledgerData, numWorkers*2)
@@ -278,36 +310,15 @@ func (i *Ingestor) processChunkParallel(ctx context.Context, ledgers []uint32) e
 		}()
 	}
 
-	// Producer: Read ledgers sequentially and send to workers
+	// Producer: Send fetched ledgers to workers
 	go func() {
-		for _, seq := range ledgers {
+		for seq, meta := range fetchedMetas {
 			select {
 			case <-ctx.Done():
 				break
 			default:
 			}
-
-			// Check if already ingested
-			ingested, err := i.db.IsLedgerIngested(seq)
-			if err != nil {
-				log.Printf("Error checking ledger %d: %v", seq, err)
-				continue
-			}
-			if ingested {
-				// Still count as processed for progress
-				i.mu.Lock()
-				i.backfillCurrent++
-				i.mu.Unlock()
-				continue
-			}
-
-			ledgerMeta, err := i.backend.GetLedger(ctx, seq)
-			if err != nil {
-				log.Printf("Error getting ledger %d: %v", seq, err)
-				continue
-			}
-
-			ledgerChan <- ledgerData{seq: seq, ledgerMeta: ledgerMeta}
+			ledgerChan <- ledgerData{seq: seq, ledgerMeta: meta}
 		}
 		close(ledgerChan)
 	}()
@@ -379,11 +390,12 @@ func (i *Ingestor) processChunkParallel(ctx context.Context, ledgers []uint32) e
 	// Flush remaining
 	if len(ledgerMarks) > 0 {
 		if err := i.flushBatch(eventBatch, ledgerMarks); err != nil {
-			return fmt.Errorf("flushing final batch: %w", err)
+			return nil, fmt.Errorf("flushing final batch: %w", err)
 		}
 	}
 
-	return nil
+	// Return any failed fetches for retry
+	return fetchFailed, nil
 }
 
 func (i *Ingestor) flushBatch(events []*database.Event, ledgers []database.LedgerMark) error {
@@ -521,16 +533,10 @@ func (i *Ingestor) continuousIngest(ctx context.Context, startLedger uint32) err
 			default:
 			}
 
-			// Prepare single ledger
-			ledgerRange := ledgerbackend.BoundedRange(seq, seq)
-			if err := i.backend.PrepareRange(ctx, ledgerRange); err != nil {
-				log.Printf("Error preparing ledger %d: %v", seq, err)
-				time.Sleep(time.Second)
-				continue
-			}
-
+			// Direct S3 fetch (no PrepareRange needed)
 			if err := i.processLedger(ctx, seq); err != nil {
 				log.Printf("Error processing ledger %d: %v", seq, err)
+				time.Sleep(time.Second)
 				continue
 			}
 
@@ -556,7 +562,7 @@ func (i *Ingestor) processLedger(ctx context.Context, seq uint32) error {
 		return nil
 	}
 
-	ledgerMeta, err := i.backend.GetLedger(ctx, seq)
+	ledgerMeta, err := i.fetcher.GetLedger(seq)
 	if err != nil {
 		return fmt.Errorf("getting ledger: %w", err)
 	}
