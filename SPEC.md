@@ -67,14 +67,14 @@ SQLite. It supports backfill over a retention window and continuous ingestion.
 
 ### Event ID Format
 
-Event IDs are compatible with Stellar RPC:
+Event IDs are compatible with Stellar RPC and based on TOID (SEP-0035):
 
 ```
 {TOID:019d}-{event_index:010d}
 ```
 
 Where:
-- `TOID = (ledger << 32) | (tx_order << 12) | op_index`
+- `TOID = (ledger << 32) | (tx_order << 12) | op_index` (SEP-0035: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0035.md)
 - `tx_order` is 1-based.
 - `event_index` is 0-based within the transaction's event stream.
 

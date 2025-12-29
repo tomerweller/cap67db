@@ -371,6 +371,6 @@ func extractAmountAndMuxedID(data xdr.ScVal) (string, *string) {
 
 // GetTxOrderInLedger returns the 1-based position of a transaction in the ledger.
 func GetTxOrderInLedger(tx ingest.LedgerTransaction) int32 {
-	// LedgerTransaction.Index is 0-based, TOID uses 1-based
+	// LedgerTransaction.Index is 0-based, TOID uses 1-based (SEP-0035: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0035.md)
 	return int32(tx.Index) + 1
 }

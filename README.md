@@ -7,7 +7,7 @@ A Go service that ingests [CAP-67](https://github.com/stellar/stellar-protocol/b
 - **CAP-67 & SEP-41 Events**: Ingests `transfer`, `mint`, `burn`, `clawback`, `fee`, and `set_authorized` events
 - **AWS S3 Data Lake**: Reads from `s3://aws-public-blockchain/v1.1/stellar/ledgers/`
 - **SQLite Storage**: Lightweight, single-file database with configurable retention
-- **Stellar RPC Compatible IDs**: Event IDs use the same TOID-based format as Stellar RPC
+- **Stellar RPC Compatible IDs**: Event IDs use the same TOID-based format as Stellar RPC (SEP-0035: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0035.md)
 - **Unified API**: Single `/events` endpoint with flexible filtering
 - **Backfill + Continuous**: Backfills retention window on startup, then ingests in real-time
 
@@ -253,7 +253,7 @@ Event IDs follow the Stellar RPC format for compatibility:
 
 Example: `0259337177669865472-0000000005`
 
-The TOID (Transaction Object ID) encodes:
+The TOID (Transaction Object ID, SEP-0035: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0035.md) encodes:
 - Bits 0-31: Ledger sequence
 - Bits 32-51: Transaction order (1-based)
 - Bits 52-63: Operation index

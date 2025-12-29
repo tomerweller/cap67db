@@ -8,7 +8,7 @@ import (
 )
 
 // MakeEventID creates a Stellar RPC compatible event ID.
-// Format: "{TOID:019d}-{event_index:010d}"
+// Format: "{TOID:019d}-{event_index:010d}" (SEP-0035: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0035.md)
 // TOID = (ledger << 32) | (txOrder << 12) | opIndex
 func MakeEventID(ledger uint32, txOrder int32, opIndex int32, eventIndex int32) string {
 	toid := (int64(ledger) << 32) | (int64(txOrder) << 12) | int64(opIndex)
