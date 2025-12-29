@@ -25,30 +25,22 @@ const (
 type S3LedgerFetcher struct {
 	network    string // pubnet, testnet, futurenet
 	httpClient *http.Client
-	decoder    *zstd.Decoder
 	baseURL    string // defaults to s3BaseURL, can be overridden for testing
 }
 
 // NewS3LedgerFetcher creates a new S3 ledger fetcher.
 func NewS3LedgerFetcher(network string) (*S3LedgerFetcher, error) {
-	decoder, err := zstd.NewReader(nil)
-	if err != nil {
-		return nil, fmt.Errorf("creating zstd decoder: %w", err)
-	}
-
 	return &S3LedgerFetcher{
 		network: network,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		decoder: decoder,
 		baseURL: s3BaseURL,
 	}, nil
 }
 
 // Close releases resources.
 func (f *S3LedgerFetcher) Close() {
-	f.decoder.Close()
 }
 
 // GetLedger fetches a single ledger from S3 and returns the LedgerCloseMeta.
@@ -75,7 +67,13 @@ func (f *S3LedgerFetcher) GetLedger(seq uint32) (xdr.LedgerCloseMeta, error) {
 	}
 
 	// Decompress
-	decompressed, err := f.decoder.DecodeAll(compressed, nil)
+	decoder, err := zstd.NewReader(nil)
+	if err != nil {
+		return xdr.LedgerCloseMeta{}, fmt.Errorf("creating zstd decoder for ledger %d: %w", seq, err)
+	}
+	defer decoder.Close()
+
+	decompressed, err := decoder.DecodeAll(compressed, nil)
 	if err != nil {
 		return xdr.LedgerCloseMeta{}, fmt.Errorf("decompressing ledger %d: %w", seq, err)
 	}

@@ -162,7 +162,6 @@ Query all CAP-67 and SEP-41 events with optional filters.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `type` | string | Event types, comma-separated: `transfer`, `mint`, `burn`, `clawback`, `fee`, `set_authorized` |
 | `contract_id` | string | Filter by contract address |
 | `account` | string | Filter by account (matches both sender and recipient) |
 | `start_ledger` | int | Minimum ledger sequence |
@@ -176,9 +175,6 @@ Query all CAP-67 and SEP-41 events with optional filters.
 ```bash
 # All events
 GET /events
-
-# Only transfers and mints
-GET /events?type=transfer,mint
 
 # Events for a specific account (as sender or recipient)
 GET /events?account=GABC...

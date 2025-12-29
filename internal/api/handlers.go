@@ -115,6 +115,7 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 
 	// Account filter - use UNION ALL with pushed-down ORDER BY and LIMIT
 	// This allows each subquery to use its respective index efficiently
+	// Note: self-transfers may appear twice; clients can filter on account/to_account if needed.
 	if params.Account != nil {
 		// Build base WHERE clause (without account filter)
 		baseWhere := ""
