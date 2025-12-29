@@ -466,6 +466,20 @@ func (i *Ingestor) extractEventsFromMeta(ledgerMeta xdr.LedgerCloseMeta, seq uin
 			v4Meta := tx.UnsafeMeta.V4
 			var eventIndex int32
 
+			// Operation-level events (ordered by operation index)
+			for opIdx, op := range v4Meta.Operations {
+				txCtx.OpIndex = int32(opIdx) + 1
+				txCtx.InSuccessfulTxn = txCtx.Successful
+				for _, opEvent := range op.Events {
+					if e := i.extractEvent(opEvent, txCtx, eventIndex); e != nil {
+						events = append(events, e)
+					}
+					eventIndex++
+				}
+			}
+
+			// Transaction-level events
+			txCtx.OpIndex = 0
 			for _, txEvent := range v4Meta.Events {
 				txCtx.InSuccessfulTxn = true
 				if e := i.extractEvent(txEvent.Event, txCtx, eventIndex); e != nil {
@@ -622,7 +636,20 @@ func (i *Ingestor) processLedger(ctx context.Context, seq uint32) error {
 			v4Meta := tx.UnsafeMeta.V4
 			var eventIndex int32
 
-			// Events
+			// Operation-level events (ordered by operation index)
+			for opIdx, op := range v4Meta.Operations {
+				txCtx.OpIndex = int32(opIdx) + 1
+				txCtx.InSuccessfulTxn = txCtx.Successful
+				for _, opEvent := range op.Events {
+					if err := i.processEvent(opEvent, txCtx, eventIndex); err != nil {
+						log.Printf("Error processing V4 op event in ledger %d: %v", seq, err)
+					}
+					eventIndex++
+				}
+			}
+
+			// Transaction-level events
+			txCtx.OpIndex = 0
 			for _, txEvent := range v4Meta.Events {
 				txCtx.InSuccessfulTxn = true
 				if err := i.processEvent(txEvent.Event, txCtx, eventIndex); err != nil {

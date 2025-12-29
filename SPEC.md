@@ -134,7 +134,7 @@ Response fields:
 
 Query parameters:
 - `contract_id` (string)
-- `account` (string; matches `account` or `to_account`)
+- `account` (string; G..., C..., L..., B...; matches `account` or `to_account`)
 - `start_ledger` (uint32)
 - `end_ledger` (uint32)
 - `cursor` (event ID)

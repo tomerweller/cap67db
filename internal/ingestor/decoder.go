@@ -10,34 +10,82 @@ import (
 )
 
 // DecodeAddress extracts a Stellar address from an ScVal.
-// Supports both G... (account) and C... (contract) addresses.
+// Supports G... (account), C... (contract), L... (liquidity pool),
+// and B... (claimable balance) strkeys when provided as address, string, or bytes.
 func DecodeAddress(val xdr.ScVal) (string, error) {
-	if val.Type != xdr.ScValTypeScvAddress {
-		return "", fmt.Errorf("expected ScvAddress, got %v", val.Type)
-	}
-
-	addr := val.Address
-	if addr == nil {
-		return "", fmt.Errorf("nil address")
-	}
-
-	switch addr.Type {
-	case xdr.ScAddressTypeScAddressTypeAccount:
-		accountID := addr.AccountId
-		if accountID == nil {
-			return "", fmt.Errorf("nil account ID")
+	switch val.Type {
+	case xdr.ScValTypeScvAddress:
+		addr := val.Address
+		if addr == nil {
+			return "", fmt.Errorf("nil address")
 		}
-		return accountID.Address(), nil
 
-	case xdr.ScAddressTypeScAddressTypeContract:
-		contractID := addr.ContractId
-		if contractID == nil {
-			return "", fmt.Errorf("nil contract ID")
+		switch addr.Type {
+		case xdr.ScAddressTypeScAddressTypeAccount:
+			accountID := addr.AccountId
+			if accountID == nil {
+				return "", fmt.Errorf("nil account ID")
+			}
+			return accountID.Address(), nil
+
+		case xdr.ScAddressTypeScAddressTypeContract:
+			contractID := addr.ContractId
+			if contractID == nil {
+				return "", fmt.Errorf("nil contract ID")
+			}
+			return strkey.Encode(strkey.VersionByteContract, contractID[:])
+		case xdr.ScAddressTypeScAddressTypeClaimableBalance:
+			cb := addr.ClaimableBalanceId
+			if cb == nil || cb.V0 == nil {
+				return "", fmt.Errorf("nil claimable balance ID")
+			}
+			return strkey.Encode(strkey.VersionByteClaimableBalance, cb.V0[:])
+		case xdr.ScAddressTypeScAddressTypeLiquidityPool:
+			lp := addr.LiquidityPoolId
+			if lp == nil {
+				return "", fmt.Errorf("nil liquidity pool ID")
+			}
+			return strkey.Encode(strkey.VersionByteLiquidityPool, (*lp)[:])
+
+		default:
+			return "", fmt.Errorf("unknown address type: %v", addr.Type)
 		}
-		return strkey.Encode(strkey.VersionByteContract, contractID[:])
-
+	case xdr.ScValTypeScvString:
+		if val.Str == nil {
+			return "", fmt.Errorf("nil string")
+		}
+		addr := string(*val.Str)
+		if isSupportedStrkey(addr) {
+			return addr, nil
+		}
+		return "", fmt.Errorf("unsupported strkey address")
+	case xdr.ScValTypeScvBytes:
+		if val.Bytes == nil {
+			return "", fmt.Errorf("nil bytes")
+		}
+		addr := string(*val.Bytes)
+		if isSupportedStrkey(addr) {
+			return addr, nil
+		}
+		return "", fmt.Errorf("unsupported strkey bytes")
 	default:
-		return "", fmt.Errorf("unknown address type: %v", addr.Type)
+		return "", fmt.Errorf("expected ScvAddress, ScvString, or ScvBytes, got %v", val.Type)
+	}
+}
+
+func isSupportedStrkey(addr string) bool {
+	version, _, err := strkey.DecodeAny(addr)
+	if err != nil {
+		return false
+	}
+	switch version {
+	case strkey.VersionByteAccountID,
+		strkey.VersionByteContract,
+		strkey.VersionByteLiquidityPool,
+		strkey.VersionByteClaimableBalance:
+		return true
+	default:
+		return false
 	}
 }
 

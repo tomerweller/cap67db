@@ -163,7 +163,7 @@ Query all CAP-67 and SEP-41 events with optional filters.
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `contract_id` | string | Filter by contract address |
-| `account` | string | Filter by account (matches both sender and recipient) |
+| `account` | string | Filter by address (G..., C..., L..., B...); matches both sender and recipient |
 | `start_ledger` | int | Minimum ledger sequence |
 | `end_ledger` | int | Maximum ledger sequence |
 | `cursor` | string | Pagination cursor (event ID) |

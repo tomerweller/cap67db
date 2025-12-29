@@ -3,6 +3,7 @@ package ingestor
 import (
 	"testing"
 
+	"github.com/stellar/go/strkey"
 	"github.com/stellar/go/xdr"
 )
 
@@ -69,6 +70,119 @@ func TestDecodeAddress_WrongType(t *testing.T) {
 	_, err := DecodeAddress(scVal)
 	if err == nil {
 		t.Error("DecodeAddress() expected error for wrong type")
+	}
+}
+
+func TestDecodeAddress_LiquidityPool_StrkeyString(t *testing.T) {
+	payload := make([]byte, 32)
+	for i := range payload {
+		payload[i] = byte(i)
+	}
+
+	addr, err := strkey.Encode(strkey.VersionByteLiquidityPool, payload)
+	if err != nil {
+		t.Fatalf("strkey.Encode() error: %v", err)
+	}
+
+	scVal := xdr.ScVal{
+		Type: xdr.ScValTypeScvString,
+		Str:  &addr,
+	}
+
+	got, err := DecodeAddress(scVal)
+	if err != nil {
+		t.Fatalf("DecodeAddress() error: %v", err)
+	}
+	if got != addr {
+		t.Errorf("DecodeAddress() = %s; want %s", got, addr)
+	}
+}
+
+func TestDecodeAddress_ClaimableBalance_StrkeyBytes(t *testing.T) {
+	payload := make([]byte, 32)
+	for i := range payload {
+		payload[i] = byte(255 - i)
+	}
+
+	addr, err := strkey.Encode(strkey.VersionByteClaimableBalance, payload)
+	if err != nil {
+		t.Fatalf("strkey.Encode() error: %v", err)
+	}
+
+	addrBytes := []byte(addr)
+	scVal := xdr.ScVal{
+		Type:  xdr.ScValTypeScvBytes,
+		Bytes: &addrBytes,
+	}
+
+	got, err := DecodeAddress(scVal)
+	if err != nil {
+		t.Fatalf("DecodeAddress() error: %v", err)
+	}
+	if got != addr {
+		t.Errorf("DecodeAddress() = %s; want %s", got, addr)
+	}
+}
+
+func TestDecodeAddress_ClaimableBalance_ScAddress(t *testing.T) {
+	hash := xdr.Hash{0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+		0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+		0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+		0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f}
+
+	cb := xdr.ClaimableBalanceId{
+		Type: xdr.ClaimableBalanceIdTypeClaimableBalanceIdTypeV0,
+		V0:   &hash,
+	}
+	scAddr := xdr.ScAddress{
+		Type:               xdr.ScAddressTypeScAddressTypeClaimableBalance,
+		ClaimableBalanceId: &cb,
+	}
+	scVal := xdr.ScVal{
+		Type:    xdr.ScValTypeScvAddress,
+		Address: &scAddr,
+	}
+
+	got, err := DecodeAddress(scVal)
+	if err != nil {
+		t.Fatalf("DecodeAddress() error: %v", err)
+	}
+
+	want, err := strkey.Encode(strkey.VersionByteClaimableBalance, hash[:])
+	if err != nil {
+		t.Fatalf("strkey.Encode() error: %v", err)
+	}
+	if got != want {
+		t.Errorf("DecodeAddress() = %s; want %s", got, want)
+	}
+}
+
+func TestDecodeAddress_LiquidityPool_ScAddress(t *testing.T) {
+	poolID := xdr.PoolId{0x2f, 0x2e, 0x2d, 0x2c, 0x2b, 0x2a, 0x29, 0x28,
+		0x27, 0x26, 0x25, 0x24, 0x23, 0x22, 0x21, 0x20,
+		0x1f, 0x1e, 0x1d, 0x1c, 0x1b, 0x1a, 0x19, 0x18,
+		0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11, 0x10}
+
+	scAddr := xdr.ScAddress{
+		Type:            xdr.ScAddressTypeScAddressTypeLiquidityPool,
+		LiquidityPoolId: &poolID,
+	}
+	scVal := xdr.ScVal{
+		Type:    xdr.ScValTypeScvAddress,
+		Address: &scAddr,
+	}
+
+	got, err := DecodeAddress(scVal)
+	if err != nil {
+		t.Fatalf("DecodeAddress() error: %v", err)
+	}
+
+	want, err := strkey.Encode(strkey.VersionByteLiquidityPool, poolID[:])
+	if err != nil {
+		t.Fatalf("strkey.Encode() error: %v", err)
+	}
+	if got != want {
+		t.Errorf("DecodeAddress() = %s; want %s", got, want)
 	}
 }
 
