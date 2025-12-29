@@ -46,10 +46,14 @@ func (c *Cleaner) Run(ctx context.Context) {
 func (c *Cleaner) cleanup() {
 	log.Printf("Running retention cleanup (keeping %d days)", c.retentionDays)
 
-	if err := c.db.DeleteOldEvents(c.retentionDays); err != nil {
+	stats, err := c.db.DeleteOldEvents(c.retentionDays)
+	if err != nil {
 		log.Printf("Error during cleanup: %v", err)
 		return
 	}
+
+	log.Printf("Cleanup deleted %d events, %d ledgers in %d batches",
+		stats.EventsDeleted, stats.LedgersDeleted, stats.Batches)
 
 	// Update earliest ledger in state
 	state, err := c.db.GetIngestionState()

@@ -23,7 +23,7 @@ func TestOpen_InMemory(t *testing.T) {
 
 	// Verify tables exist
 	var count int
-	err = db.conn.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='events'").Scan(&count)
+	err = db.readConn.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='events'").Scan(&count)
 	if err != nil {
 		t.Fatalf("Query failed: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestInsertEvent(t *testing.T) {
 
 	// Verify by querying
 	var count int
-	err := db.conn.QueryRow("SELECT COUNT(*) FROM events WHERE id = ?", event.ID).Scan(&count)
+	err := db.readConn.QueryRow("SELECT COUNT(*) FROM events WHERE id = ?", event.ID).Scan(&count)
 	if err != nil {
 		t.Fatalf("Query error: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestInsertEventsBatch(t *testing.T) {
 	}
 
 	var count int
-	err := db.conn.QueryRow("SELECT COUNT(*) FROM events").Scan(&count)
+	err := db.readConn.QueryRow("SELECT COUNT(*) FROM events").Scan(&count)
 	if err != nil {
 		t.Fatalf("Query error: %v", err)
 	}
@@ -314,13 +314,20 @@ func TestDeleteOldEvents(t *testing.T) {
 	}
 
 	// Delete events older than 7 days
-	if err := db.DeleteOldEvents(7); err != nil {
+	stats, err := db.DeleteOldEvents(7)
+	if err != nil {
 		t.Fatalf("DeleteOldEvents() error: %v", err)
+	}
+	if stats.EventsDeleted != 1 {
+		t.Errorf("EventsDeleted = %d; want 1", stats.EventsDeleted)
+	}
+	if stats.LedgersDeleted != 1 {
+		t.Errorf("LedgersDeleted = %d; want 1", stats.LedgersDeleted)
 	}
 
 	// Old event should be deleted
 	var count int
-	if err := db.conn.QueryRow("SELECT COUNT(*) FROM events WHERE id = ?", oldEvent.ID).Scan(&count); err != nil {
+	if err := db.readConn.QueryRow("SELECT COUNT(*) FROM events WHERE id = ?", oldEvent.ID).Scan(&count); err != nil {
 		t.Fatalf("QueryRow(old) error: %v", err)
 	}
 	if count != 0 {
@@ -328,7 +335,7 @@ func TestDeleteOldEvents(t *testing.T) {
 	}
 
 	// Recent event should remain
-	if err := db.conn.QueryRow("SELECT COUNT(*) FROM events WHERE id = ?", recentEvent.ID).Scan(&count); err != nil {
+	if err := db.readConn.QueryRow("SELECT COUNT(*) FROM events WHERE id = ?", recentEvent.ID).Scan(&count); err != nil {
 		t.Fatalf("QueryRow(recent) error: %v", err)
 	}
 	if count != 1 {

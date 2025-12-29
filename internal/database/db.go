@@ -14,22 +14,42 @@ import (
 var schemaSQL string
 
 type DB struct {
-	conn *sql.DB
+	writeConn *sql.DB // Single writer connection
+	readConn  *sql.DB // Multiple reader connections
 }
 
 func Open(path string) (*DB, error) {
-	// Use longer busy_timeout (60s) and immediate transaction locking to avoid lock contention
-	conn, err := sql.Open("sqlite3", path+"?_journal_mode=WAL&_busy_timeout=60000&_txlock=immediate&_synchronous=NORMAL")
-	if err != nil {
-		return nil, fmt.Errorf("opening database: %w", err)
+	var writeConnStr, readConnStr string
+
+	if path == ":memory:" {
+		// For in-memory databases, use shared cache so both connections see the same data
+		writeConnStr = "file::memory:?cache=shared&_journal_mode=WAL&_busy_timeout=60000&_txlock=immediate"
+		readConnStr = "file::memory:?cache=shared&_journal_mode=WAL&_busy_timeout=5000"
+	} else {
+		// For file-based databases, use separate read and write connections
+		writeConnStr = path + "?_journal_mode=WAL&_busy_timeout=60000&_txlock=immediate&_synchronous=NORMAL"
+		readConnStr = path + "?_journal_mode=WAL&_busy_timeout=5000&mode=ro"
 	}
 
-	// Limit to single writer connection to prevent lock contention
-	conn.SetMaxOpenConns(1)
+	// Writer connection: single connection with immediate locking
+	writeConn, err := sql.Open("sqlite3", writeConnStr)
+	if err != nil {
+		return nil, fmt.Errorf("opening write database: %w", err)
+	}
+	writeConn.SetMaxOpenConns(1)
 
-	db := &DB{conn: conn}
+	// Reader connection pool: multiple connections for concurrent reads
+	readConn, err := sql.Open("sqlite3", readConnStr)
+	if err != nil {
+		writeConn.Close()
+		return nil, fmt.Errorf("opening read database: %w", err)
+	}
+	readConn.SetMaxOpenConns(10) // Allow up to 10 concurrent readers
+
+	db := &DB{writeConn: writeConn, readConn: readConn}
 	if err := db.migrate(); err != nil {
-		conn.Close()
+		writeConn.Close()
+		readConn.Close()
 		return nil, fmt.Errorf("running migrations: %w", err)
 	}
 
@@ -37,7 +57,12 @@ func Open(path string) (*DB, error) {
 }
 
 func (db *DB) Close() error {
-	return db.conn.Close()
+	err1 := db.writeConn.Close()
+	err2 := db.readConn.Close()
+	if err1 != nil {
+		return err1
+	}
+	return err2
 }
 
 func (db *DB) migrate() error {
@@ -59,7 +84,7 @@ func (db *DB) migrate() error {
 		if stmt == "" {
 			continue
 		}
-		if _, err := db.conn.Exec(stmt); err != nil {
+		if _, err := db.writeConn.Exec(stmt); err != nil {
 			return fmt.Errorf("executing migration %q: %w", stmt[:min(50, len(stmt))], err)
 		}
 	}
@@ -68,7 +93,7 @@ func (db *DB) migrate() error {
 
 // GetIngestionState returns the current ingestion state.
 func (db *DB) GetIngestionState() (*IngestionState, error) {
-	row := db.conn.QueryRow(`SELECT earliest_ledger, latest_ledger, retention_days, is_ready, updated_at FROM ingestion_state WHERE id = 1`)
+	row := db.readConn.QueryRow(`SELECT earliest_ledger, latest_ledger, retention_days, is_ready, updated_at FROM ingestion_state WHERE id = 1`)
 
 	state := &IngestionState{}
 	err := row.Scan(&state.EarliestLedger, &state.LatestLedger, &state.RetentionDays, &state.IsReady, &state.UpdatedAt)
@@ -83,7 +108,7 @@ func (db *DB) GetIngestionState() (*IngestionState, error) {
 
 // UpdateIngestionState updates or inserts the ingestion state.
 func (db *DB) UpdateIngestionState(state *IngestionState) error {
-	_, err := db.conn.Exec(`
+	_, err := db.writeConn.Exec(`
 		INSERT INTO ingestion_state (id, earliest_ledger, latest_ledger, retention_days, is_ready, updated_at)
 		VALUES (1, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
@@ -98,7 +123,7 @@ func (db *DB) UpdateIngestionState(state *IngestionState) error {
 
 // MarkLedgerIngested records that a ledger has been ingested.
 func (db *DB) MarkLedgerIngested(ledgerSeq uint32, closedAt time.Time) error {
-	_, err := db.conn.Exec(`
+	_, err := db.writeConn.Exec(`
 		INSERT OR IGNORE INTO ingested_ledgers (ledger_sequence, closed_at, ingested_at)
 		VALUES (?, ?, ?)
 	`, ledgerSeq, closedAt, time.Now())
@@ -108,7 +133,7 @@ func (db *DB) MarkLedgerIngested(ledgerSeq uint32, closedAt time.Time) error {
 // IsLedgerIngested checks if a ledger has been ingested.
 func (db *DB) IsLedgerIngested(ledgerSeq uint32) (bool, error) {
 	var count int
-	err := db.conn.QueryRow(`SELECT COUNT(*) FROM ingested_ledgers WHERE ledger_sequence = ?`, ledgerSeq).Scan(&count)
+	err := db.readConn.QueryRow(`SELECT COUNT(*) FROM ingested_ledgers WHERE ledger_sequence = ?`, ledgerSeq).Scan(&count)
 	if err != nil {
 		return false, err
 	}
@@ -119,7 +144,7 @@ func (db *DB) IsLedgerIngested(ledgerSeq uint32) (bool, error) {
 func (db *DB) GetMissingLedgers(start, end uint32) ([]uint32, error) {
 	ingested := make(map[uint32]bool)
 
-	rows, err := db.conn.Query(`SELECT ledger_sequence FROM ingested_ledgers WHERE ledger_sequence >= ? AND ledger_sequence <= ?`, start, end)
+	rows, err := db.readConn.Query(`SELECT ledger_sequence FROM ingested_ledgers WHERE ledger_sequence >= ? AND ledger_sequence <= ?`, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +169,7 @@ func (db *DB) GetMissingLedgers(start, end uint32) ([]uint32, error) {
 
 // InsertEvent inserts a unified event.
 func (db *DB) InsertEvent(e *Event) error {
-	_, err := db.conn.Exec(`
+	_, err := db.writeConn.Exec(`
 		INSERT OR IGNORE INTO events
 		(id, event_type, ledger_sequence, tx_hash, closed_at, successful, in_successful_txn,
 		 contract_id, account, to_account, asset_name, amount, to_muxed_id, authorized)
@@ -160,7 +185,7 @@ func (db *DB) InsertEventsBatch(events []*Event) error {
 		return nil
 	}
 
-	tx, err := db.conn.Begin()
+	tx, err := db.writeConn.Begin()
 	if err != nil {
 		return err
 	}
@@ -194,7 +219,7 @@ func (db *DB) MarkLedgersIngestedBatch(ledgers []LedgerMark) error {
 		return nil
 	}
 
-	tx, err := db.conn.Begin()
+	tx, err := db.writeConn.Begin()
 	if err != nil {
 		return err
 	}
@@ -226,21 +251,68 @@ type LedgerMark struct {
 	ClosedAt time.Time
 }
 
-// DeleteOldEvents deletes events older than the retention period.
-func (db *DB) DeleteOldEvents(retentionDays int) error {
-	cutoff := time.Now().AddDate(0, 0, -retentionDays)
-
-	_, err := db.conn.Exec(`DELETE FROM events WHERE closed_at < ?`, cutoff)
-	if err != nil {
-		return fmt.Errorf("deleting old events: %w", err)
-	}
-
-	// Also clean up ingested_ledgers
-	_, err = db.conn.Exec(`DELETE FROM ingested_ledgers WHERE closed_at < ?`, cutoff)
-	return err
+// DeleteStats contains statistics about a batched delete operation.
+type DeleteStats struct {
+	EventsDeleted  int64
+	LedgersDeleted int64
+	Batches        int
 }
 
-// Conn returns the underlying sql.DB for query building.
+// DeleteOldEvents deletes events older than the retention period in batches.
+// This prevents long-running deletes from blocking other write operations.
+func (db *DB) DeleteOldEvents(retentionDays int) (*DeleteStats, error) {
+	cutoff := time.Now().AddDate(0, 0, -retentionDays)
+	stats := &DeleteStats{}
+
+	const batchSize = 5000
+	const sleepBetweenBatches = 50 * time.Millisecond
+
+	// Delete events in batches
+	for {
+		result, err := db.writeConn.Exec(`
+			DELETE FROM events WHERE rowid IN (
+				SELECT rowid FROM events WHERE closed_at < ? LIMIT ?
+			)`, cutoff, batchSize)
+		if err != nil {
+			return stats, fmt.Errorf("deleting old events: %w", err)
+		}
+
+		affected, _ := result.RowsAffected()
+		stats.EventsDeleted += affected
+		stats.Batches++
+
+		if affected < batchSize {
+			break // No more rows to delete
+		}
+
+		time.Sleep(sleepBetweenBatches) // Yield to allow other writes
+	}
+
+	// Delete ingested_ledgers in batches
+	for {
+		result, err := db.writeConn.Exec(`
+			DELETE FROM ingested_ledgers WHERE rowid IN (
+				SELECT rowid FROM ingested_ledgers WHERE closed_at < ? LIMIT ?
+			)`, cutoff, batchSize)
+		if err != nil {
+			return stats, fmt.Errorf("deleting old ledgers: %w", err)
+		}
+
+		affected, _ := result.RowsAffected()
+		stats.LedgersDeleted += affected
+		stats.Batches++
+
+		if affected < batchSize {
+			break
+		}
+
+		time.Sleep(sleepBetweenBatches)
+	}
+
+	return stats, nil
+}
+
+// Conn returns the read connection for query building.
 func (db *DB) Conn() *sql.DB {
-	return db.conn
+	return db.readConn
 }

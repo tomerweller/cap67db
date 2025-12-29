@@ -90,6 +90,49 @@ The service reads ledger data from the [AWS Public Blockchain Data](https://regi
 - **Prepared statements**: Reuses compiled SQL for insert performance
 - **WAL mode**: Enables concurrent reads during writes
 
+## Retention Cleanup
+
+The service automatically cleans up old events beyond the retention window using a **batched deletion** strategy that prevents blocking database operations.
+
+### Schedule
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| Interval | 1 hour | Cleanup runs every hour |
+| Startup | Skipped | No cleanup at startup to avoid blocking backfill |
+
+### Batched Deletion Strategy
+
+A single large DELETE (e.g., 100,000 rows) would hold the write lock for seconds/minutes, blocking ingestion and API writes. Instead, events are deleted in small batches:
+
+```
+┌────────────────────────────────────────────────────────────┐
+│                 Batched Deletion Flow                      │
+├────────────────────────────────────────────────────────────┤
+│                                                            │
+│  1. DELETE 5,000 rows  ──→  [write lock: ~10-50ms]        │
+│                    │                                       │
+│                    ↓                                       │
+│  2. Sleep 50ms     ──→  [other writes can proceed]        │
+│                    │                                       │
+│                    ↓                                       │
+│  3. Repeat until done                                      │
+│                                                            │
+└────────────────────────────────────────────────────────────┘
+```
+
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| Batch size | 5,000 rows | Tuned for ~10-50ms per batch |
+| Sleep between batches | 50ms | Allows ingestion writes to interleave |
+| Cutoff | `closed_at < now - retention_days` | Based on ledger close time |
+
+This approach:
+- Each batch holds the write lock for only ~10-50ms
+- Ingestion writes can interleave between batches
+- API reads continue unblocked (separate read connection pool)
+- Total cleanup takes longer wall-clock time but doesn't starve other operations
+
 ## API Endpoints
 
 ### Health Check

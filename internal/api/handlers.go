@@ -86,12 +86,6 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 		args = append(args, *params.ContractID)
 	}
 
-	// Account filter - searches both account and to_account
-	if params.Account != nil {
-		conditions = append(conditions, "(account = ? OR to_account = ?)")
-		args = append(args, *params.Account, *params.Account)
-	}
-
 	// Ledger range filters
 	if params.StartLedger != nil {
 		conditions = append(conditions, "ledger_sequence >= ?")
@@ -113,23 +107,57 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 		args = append(args, *params.Cursor)
 	}
 
-	whereClause := ""
-	if len(conditions) > 0 {
-		whereClause = "WHERE " + strings.Join(conditions, " AND ")
+	var query string
+	var queryArgs []interface{}
+
+	selectCols := `id, event_type, ledger_sequence, tx_hash, closed_at, successful, in_successful_txn,
+		       contract_id, account, to_account, asset_name, amount, to_muxed_id, authorized`
+
+	// Account filter - use UNION ALL with pushed-down ORDER BY and LIMIT
+	// This allows each subquery to use its respective index efficiently
+	if params.Account != nil {
+		// Build base WHERE clause (without account filter)
+		baseWhere := ""
+		if len(conditions) > 0 {
+			baseWhere = " AND " + strings.Join(conditions, " AND ")
+		}
+
+		// Each subquery fetches top N results using its index, then we merge and re-sort
+		// This processes at most 2*LIMIT rows instead of scanning all matching rows
+		query = fmt.Sprintf(`
+			SELECT * FROM (
+				SELECT * FROM (SELECT %s FROM events WHERE account = ?%s ORDER BY id %s LIMIT ?)
+				UNION ALL
+				SELECT * FROM (SELECT %s FROM events WHERE to_account = ?%s ORDER BY id %s LIMIT ?)
+			) ORDER BY id %s LIMIT ?
+		`, selectCols, baseWhere, params.Order, selectCols, baseWhere, params.Order, params.Order)
+
+		// Args: account, base conditions..., limit, to_account, base conditions..., limit, final limit
+		queryArgs = append(queryArgs, *params.Account)
+		queryArgs = append(queryArgs, args...)
+		queryArgs = append(queryArgs, params.Limit)
+		queryArgs = append(queryArgs, *params.Account)
+		queryArgs = append(queryArgs, args...)
+		queryArgs = append(queryArgs, params.Limit)
+		queryArgs = append(queryArgs, params.Limit)
+	} else {
+		// No account filter - use simple query
+		whereClause := ""
+		if len(conditions) > 0 {
+			whereClause = "WHERE " + strings.Join(conditions, " AND ")
+		}
+
+		query = fmt.Sprintf(`
+			SELECT %s
+			FROM events %s
+			ORDER BY id %s
+			LIMIT ?
+		`, selectCols, whereClause, params.Order)
+
+		queryArgs = append(args, params.Limit)
 	}
 
-	// Build query
-	query := fmt.Sprintf(`
-		SELECT id, event_type, ledger_sequence, tx_hash, closed_at, successful, in_successful_txn,
-		       contract_id, account, to_account, asset_name, amount, to_muxed_id, authorized
-		FROM events %s
-		ORDER BY id %s
-		LIMIT ?
-	`, whereClause, params.Order)
-
-	args = append(args, params.Limit)
-
-	rows, err := s.db.Conn().Query(query, args...)
+	rows, err := s.db.Conn().Query(query, queryArgs...)
 	if err != nil {
 		s.errorResponse(w, http.StatusInternalServerError, err.Error())
 		return
