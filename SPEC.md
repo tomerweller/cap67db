@@ -101,7 +101,7 @@ Where:
 1. Open database and apply migrations.
 2. Query Stellar RPC for latest ledger.
 3. Compute `start_ledger` based on retention:
-   - `start = max(1, latest - retention_days*17280)`
+   - `start = max(1, latest - retention_ledgers + 1)`
 4. Fetch missing ledgers between `start` and `latest`.
 5. Mark `ingestion_state.is_ready = true` when backfill completes.
 
@@ -127,7 +127,7 @@ Response fields:
 - `status`: `initializing` or `ready`
 - `earliest_ledger`
 - `latest_ledger`
-- `retention_days`
+- `retention_ledgers`
 - `backfill_progress`
 
 ### `GET /events`
@@ -153,7 +153,7 @@ Response:
 
 ### Behavior
 
-- Periodic cleanup deletes rows older than `retention_days`.
+- Periodic cleanup deletes rows with `ledger_sequence < latest - retention_ledgers + 1`.
 - Deletions occur in small batches with a short sleep to avoid long write locks.
 - `ingestion_state.earliest_ledger` is updated after cleanup.
 
@@ -165,7 +165,7 @@ Environment variables:
 | --- | --- | --- |
 | `PORT` | `8080` | HTTP server port |
 | `DATABASE_PATH` | `./cap67.db` | SQLite file path |
-| `RETENTION_DAYS` | `7` | Days to retain |
+| `RETENTION_LEDGERS` | `120960` | Ledgers to retain (approx 7 days) |
 | `STELLAR_NETWORK` | `pubnet` | `pubnet`, `testnet`, `futurenet` |
 | `STELLAR_RPC_URL` | auto | Override RPC URL |
 | `INGEST_WORKERS` | `4` | Parallel processing workers |

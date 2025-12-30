@@ -4,11 +4,11 @@ import "time"
 
 // IngestionState tracks the overall ingestion state (singleton row).
 type IngestionState struct {
-	EarliestLedger uint32    `json:"earliest_ledger"`
-	LatestLedger   uint32    `json:"latest_ledger"`
-	RetentionDays  int       `json:"retention_days"`
-	IsReady        bool      `json:"is_ready"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	EarliestLedger   uint32    `json:"earliest_ledger"`
+	LatestLedger     uint32    `json:"latest_ledger"`
+	RetentionLedgers int       `json:"retention_ledgers"`
+	IsReady          bool      `json:"is_ready"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // IngestedLedger tracks which ledgers have been ingested.

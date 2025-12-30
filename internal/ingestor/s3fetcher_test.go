@@ -16,17 +16,11 @@ import (
 
 // createTestFetcher creates a fetcher pointing to a test server
 func createTestFetcher(t *testing.T, serverURL string) *S3LedgerFetcher {
-	decoder, err := zstd.NewReader(nil)
-	if err != nil {
-		t.Fatalf("Failed to create zstd decoder: %v", err)
-	}
-
 	return &S3LedgerFetcher{
 		network: "pubnet",
 		httpClient: &http.Client{
 			Timeout: 5 * time.Second,
 		},
-		decoder: decoder,
 		baseURL: serverURL,
 	}
 }
@@ -126,13 +120,11 @@ func TestGetLedgerBatch_NetworkTimeout(t *testing.T) {
 	}))
 	defer server.Close()
 
-	decoder, _ := zstd.NewReader(nil)
 	fetcher := &S3LedgerFetcher{
 		network: "pubnet",
 		httpClient: &http.Client{
 			Timeout: 100 * time.Millisecond, // Very short timeout
 		},
-		decoder: decoder,
 		baseURL: server.URL,
 	}
 	defer fetcher.Close()

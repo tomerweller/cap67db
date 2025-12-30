@@ -29,7 +29,7 @@ go build -o cap67db ./cmd/server
 The service will:
 1. Connect to SQLite database (creates if not exists)
 2. Query Stellar RPC for latest ledger
-3. Backfill events from `[now - retention_days]` to `now`
+3. Backfill events from the last `retention_ledgers` ledgers
 4. Start HTTP server on port 8080
 5. Continue ingesting new ledgers in real-time
 
@@ -39,7 +39,7 @@ The service will:
 |---------------------|---------|-------------|
 | `PORT` | `8080` | HTTP server port |
 | `DATABASE_PATH` | `./cap67.db` | SQLite database file path |
-| `RETENTION_DAYS` | `7` | Days of data to keep |
+| `RETENTION_LEDGERS` | `120960` | Ledgers of data to keep (approx 7 days) |
 | `STELLAR_NETWORK` | `pubnet` | Network: `pubnet`, `testnet`, `futurenet` |
 | `STELLAR_RPC_URL` | (auto) | Override Stellar RPC URL |
 | `INGEST_WORKERS` | `4` | Number of parallel event processing workers |
@@ -124,7 +124,7 @@ A single large DELETE (e.g., 100,000 rows) would hold the write lock for seconds
 |-----------|-------|-------|
 | Batch size | 5,000 rows | Tuned for ~10-50ms per batch |
 | Sleep between batches | 50ms | Allows ingestion writes to interleave |
-| Cutoff | `closed_at < now - retention_days` | Based on ledger close time |
+| Cutoff | `ledger_sequence < latest - retention_ledgers + 1` | Based on ledger sequence |
 
 This approach:
 - Each batch holds the write lock for only ~10-50ms
@@ -145,7 +145,7 @@ GET /health
   "status": "ready",
   "earliest_ledger": 60381640,
   "latest_ledger": 60502600,
-  "retention_days": 7,
+  "retention_ledgers": 120960,
   "backfill_progress": 100.0
 }
 ```

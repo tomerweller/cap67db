@@ -88,15 +88,57 @@ func (db *DB) migrate() error {
 			return fmt.Errorf("executing migration %q: %w", stmt[:min(50, len(stmt))], err)
 		}
 	}
+	if err := db.ensureRetentionLedgersColumn(); err != nil {
+		return fmt.Errorf("ensuring retention_ledgers column: %w", err)
+	}
 	return nil
+}
+
+func (db *DB) ensureRetentionLedgersColumn() error {
+	rows, err := db.writeConn.Query(`PRAGMA table_info(ingestion_state)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasRetentionLedgers := false
+	hasRetentionDays := false
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			colType    string
+			notNull    int
+			defaultV   *string
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultV, &primaryKey); err != nil {
+			return err
+		}
+		switch name {
+		case "retention_ledgers":
+			hasRetentionLedgers = true
+		case "retention_days":
+			hasRetentionDays = true
+		}
+	}
+	if hasRetentionLedgers {
+		return nil
+	}
+	if hasRetentionDays {
+		_, err = db.writeConn.Exec(`ALTER TABLE ingestion_state RENAME COLUMN retention_days TO retention_ledgers`)
+		return err
+	}
+	_, err = db.writeConn.Exec(`ALTER TABLE ingestion_state ADD COLUMN retention_ledgers INTEGER NOT NULL DEFAULT 120960`)
+	return err
 }
 
 // GetIngestionState returns the current ingestion state.
 func (db *DB) GetIngestionState() (*IngestionState, error) {
-	row := db.readConn.QueryRow(`SELECT earliest_ledger, latest_ledger, retention_days, is_ready, updated_at FROM ingestion_state WHERE id = 1`)
+	row := db.readConn.QueryRow(`SELECT earliest_ledger, latest_ledger, retention_ledgers, is_ready, updated_at FROM ingestion_state WHERE id = 1`)
 
 	state := &IngestionState{}
-	err := row.Scan(&state.EarliestLedger, &state.LatestLedger, &state.RetentionDays, &state.IsReady, &state.UpdatedAt)
+	err := row.Scan(&state.EarliestLedger, &state.LatestLedger, &state.RetentionLedgers, &state.IsReady, &state.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -109,15 +151,15 @@ func (db *DB) GetIngestionState() (*IngestionState, error) {
 // UpdateIngestionState updates or inserts the ingestion state.
 func (db *DB) UpdateIngestionState(state *IngestionState) error {
 	_, err := db.writeConn.Exec(`
-		INSERT INTO ingestion_state (id, earliest_ledger, latest_ledger, retention_days, is_ready, updated_at)
+		INSERT INTO ingestion_state (id, earliest_ledger, latest_ledger, retention_ledgers, is_ready, updated_at)
 		VALUES (1, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			earliest_ledger = excluded.earliest_ledger,
 			latest_ledger = excluded.latest_ledger,
-			retention_days = excluded.retention_days,
+			retention_ledgers = excluded.retention_ledgers,
 			is_ready = excluded.is_ready,
 			updated_at = excluded.updated_at
-	`, state.EarliestLedger, state.LatestLedger, state.RetentionDays, state.IsReady, time.Now())
+	`, state.EarliestLedger, state.LatestLedger, state.RetentionLedgers, state.IsReady, time.Now())
 	return err
 }
 
@@ -258,10 +300,9 @@ type DeleteStats struct {
 	Batches        int
 }
 
-// DeleteOldEvents deletes events older than the retention period in batches.
+// DeleteOldEvents deletes events older than the retention window in batches.
 // This prevents long-running deletes from blocking other write operations.
-func (db *DB) DeleteOldEvents(retentionDays int) (*DeleteStats, error) {
-	cutoff := time.Now().AddDate(0, 0, -retentionDays)
+func (db *DB) DeleteOldEvents(minLedgerToKeep uint32) (*DeleteStats, error) {
 	stats := &DeleteStats{}
 
 	const batchSize = 5000
@@ -271,8 +312,8 @@ func (db *DB) DeleteOldEvents(retentionDays int) (*DeleteStats, error) {
 	for {
 		result, err := db.writeConn.Exec(`
 			DELETE FROM events WHERE rowid IN (
-				SELECT rowid FROM events WHERE closed_at < ? LIMIT ?
-			)`, cutoff, batchSize)
+				SELECT rowid FROM events WHERE ledger_sequence < ? LIMIT ?
+			)`, minLedgerToKeep, batchSize)
 		if err != nil {
 			return stats, fmt.Errorf("deleting old events: %w", err)
 		}
@@ -292,8 +333,8 @@ func (db *DB) DeleteOldEvents(retentionDays int) (*DeleteStats, error) {
 	for {
 		result, err := db.writeConn.Exec(`
 			DELETE FROM ingested_ledgers WHERE rowid IN (
-				SELECT rowid FROM ingested_ledgers WHERE closed_at < ? LIMIT ?
-			)`, cutoff, batchSize)
+				SELECT rowid FROM ingested_ledgers WHERE ledger_sequence < ? LIMIT ?
+			)`, minLedgerToKeep, batchSize)
 		if err != nil {
 			return stats, fmt.Errorf("deleting old ledgers: %w", err)
 		}

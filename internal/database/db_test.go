@@ -47,10 +47,10 @@ func TestIngestionState(t *testing.T) {
 
 	// Insert state
 	newState := &IngestionState{
-		EarliestLedger: 1000,
-		LatestLedger:   2000,
-		RetentionDays:  7,
-		IsReady:        false,
+		EarliestLedger:   1000,
+		LatestLedger:     2000,
+		RetentionLedgers: 7,
+		IsReady:          false,
 	}
 	if err := db.UpdateIngestionState(newState); err != nil {
 		t.Fatalf("UpdateIngestionState() error: %v", err)
@@ -271,8 +271,6 @@ func TestDeleteOldEvents(t *testing.T) {
 	defer db.Close()
 
 	now := time.Now()
-	oldTime := now.AddDate(0, 0, -10) // 10 days ago
-	recentTime := now.AddDate(0, 0, -3) // 3 days ago
 
 	// Insert old event
 	oldEvent := &Event{
@@ -280,7 +278,7 @@ func TestDeleteOldEvents(t *testing.T) {
 		EventType:       EventTypeTransfer,
 		LedgerSequence:  100,
 		TxHash:          "old",
-		ClosedAt:        oldTime,
+		ClosedAt:        now.Add(-2 * time.Hour),
 		Successful:      true,
 		InSuccessfulTxn: true,
 		ContractID:      "C...",
@@ -293,7 +291,7 @@ func TestDeleteOldEvents(t *testing.T) {
 		EventType:       EventTypeTransfer,
 		LedgerSequence:  200,
 		TxHash:          "recent",
-		ClosedAt:        recentTime,
+		ClosedAt:        now,
 		Successful:      true,
 		InSuccessfulTxn: true,
 		ContractID:      "C...",
@@ -306,15 +304,15 @@ func TestDeleteOldEvents(t *testing.T) {
 	if err := db.InsertEvent(recentEvent); err != nil {
 		t.Fatalf("InsertEvent(recent) error: %v", err)
 	}
-	if err := db.MarkLedgerIngested(100, oldTime); err != nil {
+	if err := db.MarkLedgerIngested(100, oldEvent.ClosedAt); err != nil {
 		t.Fatalf("MarkLedgerIngested(100) error: %v", err)
 	}
-	if err := db.MarkLedgerIngested(200, recentTime); err != nil {
+	if err := db.MarkLedgerIngested(200, recentEvent.ClosedAt); err != nil {
 		t.Fatalf("MarkLedgerIngested(200) error: %v", err)
 	}
 
-	// Delete events older than 7 days
-	stats, err := db.DeleteOldEvents(7)
+	// Delete events before ledger 150
+	stats, err := db.DeleteOldEvents(150)
 	if err != nil {
 		t.Fatalf("DeleteOldEvents() error: %v", err)
 	}

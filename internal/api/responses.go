@@ -13,7 +13,7 @@ type HealthResponse struct {
 	Status           string  `json:"status"`
 	EarliestLedger   uint32  `json:"earliest_ledger"`
 	LatestLedger     uint32  `json:"latest_ledger"`
-	RetentionDays    int     `json:"retention_days"`
+	RetentionLedgers int     `json:"retention_ledgers"`
 	BackfillProgress float64 `json:"backfill_progress"`
 }
 

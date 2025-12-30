@@ -34,7 +34,7 @@ func setupTestServer(t *testing.T) (*Server, *database.DB) {
 	}
 
 	cfg := &config.Config{
-		RetentionDays: 7,
+		RetentionLedgers: 7,
 	}
 
 	// Create a minimal server without real ingestor
@@ -100,12 +100,12 @@ func TestParseEventQueryParams_LimitBounds(t *testing.T) {
 		query     string
 		wantLimit int
 	}{
-		{"limit=0", 100},      // Invalid, use default
-		{"limit=-1", 100},     // Invalid, use default
-		{"limit=1001", 100},   // Too high, use default
-		{"limit=1", 1},        // Valid minimum
-		{"limit=1000", 1000},  // Valid maximum
-		{"limit=abc", 100},    // Non-numeric, use default
+		{"limit=0", 100},     // Invalid, use default
+		{"limit=-1", 100},    // Invalid, use default
+		{"limit=1001", 100},  // Too high, use default
+		{"limit=1", 1},       // Valid minimum
+		{"limit=1000", 1000}, // Valid maximum
+		{"limit=abc", 100},   // Non-numeric, use default
 	}
 
 	for _, tt := range tests {
@@ -126,9 +126,9 @@ func TestParseEventQueryParams_OrderValidation(t *testing.T) {
 	}{
 		{"order=asc", "asc"},
 		{"order=desc", "desc"},
-		{"order=invalid", "asc"},   // Invalid, use default
-		{"order=ASC", "asc"},       // Case sensitive, use default
-		{"", "asc"},                // Not specified, use default
+		{"order=invalid", "asc"}, // Invalid, use default
+		{"order=ASC", "asc"},     // Case sensitive, use default
+		{"", "asc"},              // Not specified, use default
 	}
 
 	for _, tt := range tests {
@@ -149,7 +149,7 @@ func TestListEvents_Empty(t *testing.T) {
 	}
 	defer db.Close()
 
-	cfg := &config.Config{RetentionDays: 7}
+	cfg := &config.Config{RetentionLedgers: 7}
 	s := &Server{
 		cfg: cfg,
 		db:  db,
@@ -205,7 +205,7 @@ func TestListEvents_WithData(t *testing.T) {
 		}
 	}
 
-	cfg := &config.Config{RetentionDays: 7}
+	cfg := &config.Config{RetentionLedgers: 7}
 	s := &Server{
 		cfg: cfg,
 		db:  db,
@@ -271,7 +271,7 @@ func TestListEvents_FilterByAccount(t *testing.T) {
 		db.InsertEvent(event)
 	}
 
-	cfg := &config.Config{RetentionDays: 7}
+	cfg := &config.Config{RetentionLedgers: 7}
 	s := &Server{
 		cfg: cfg,
 		db:  db,
@@ -314,7 +314,7 @@ func TestListEvents_Pagination(t *testing.T) {
 		db.InsertEvent(event)
 	}
 
-	cfg := &config.Config{RetentionDays: 7}
+	cfg := &config.Config{RetentionLedgers: 7}
 	s := &Server{
 		cfg: cfg,
 		db:  db,
@@ -359,7 +359,7 @@ func TestCorsMiddleware(t *testing.T) {
 	db, _ := database.Open(":memory:")
 	defer db.Close()
 
-	cfg := &config.Config{RetentionDays: 7}
+	cfg := &config.Config{RetentionLedgers: 7}
 	s := &Server{
 		cfg: cfg,
 		db:  db,

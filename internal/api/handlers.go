@@ -192,7 +192,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 
 	resp := HealthResponse{
 		Status:           "initializing",
-		RetentionDays:    s.cfg.RetentionDays,
+		RetentionLedgers: s.cfg.RetentionLedgers,
 		BackfillProgress: s.ingestor.BackfillProgress(),
 	}
 

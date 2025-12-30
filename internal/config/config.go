@@ -6,26 +6,26 @@ import (
 )
 
 type Config struct {
-	Port          int
-	DatabasePath  string
-	RetentionDays int
-	LogLevel      string
-	Network       string // pubnet, testnet, futurenet
-	RPCURL        string // Stellar RPC URL
-	IngestWorkers int    // Number of parallel processing workers
-	IngestBatch   int    // Batch size for DB writes
+	Port             int
+	DatabasePath     string
+	RetentionLedgers int
+	LogLevel         string
+	Network          string // pubnet, testnet, futurenet
+	RPCURL           string // Stellar RPC URL
+	IngestWorkers    int    // Number of parallel processing workers
+	IngestBatch      int    // Batch size for DB writes
 }
 
 func Load() *Config {
 	return &Config{
-		Port:          getEnvInt("PORT", 8080),
-		DatabasePath:  getEnv("DATABASE_PATH", "./cap67.db"),
-		RetentionDays: getEnvInt("RETENTION_DAYS", 7),
-		LogLevel:      getEnv("LOG_LEVEL", "info"),
-		Network:       getEnv("STELLAR_NETWORK", "pubnet"),
-		RPCURL:        getEnv("STELLAR_RPC_URL", ""),
-		IngestWorkers: getEnvInt("INGEST_WORKERS", 4),
-		IngestBatch:   getEnvInt("INGEST_BATCH_SIZE", 100),
+		Port:             getEnvInt("PORT", 8080),
+		DatabasePath:     getEnv("DATABASE_PATH", "./cap67.db"),
+		RetentionLedgers: getEnvInt("RETENTION_LEDGERS", 120960),
+		LogLevel:         getEnv("LOG_LEVEL", "info"),
+		Network:          getEnv("STELLAR_NETWORK", "pubnet"),
+		RPCURL:           getEnv("STELLAR_RPC_URL", ""),
+		IngestWorkers:    getEnvInt("INGEST_WORKERS", 4),
+		IngestBatch:      getEnvInt("INGEST_BATCH_SIZE", 100),
 	}
 }
 

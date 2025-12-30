@@ -24,7 +24,7 @@ func main() {
 	log.Printf("CAP-67 Event Service starting...")
 	log.Printf("Network: %s", cfg.Network)
 	log.Printf("Database: %s", cfg.DatabasePath)
-	log.Printf("Retention: %d days", cfg.RetentionDays)
+	log.Printf("Retention: %d ledgers", cfg.RetentionLedgers)
 	log.Printf("Port: %d", cfg.Port)
 
 	// Open database
@@ -55,7 +55,7 @@ func main() {
 	}()
 
 	// Start retention cleaner
-	cleaner := retention.NewCleaner(db, cfg.RetentionDays)
+	cleaner := retention.NewCleaner(db, cfg.RetentionLedgers)
 	go cleaner.Run(ctx)
 
 	// Start ingestor in background

@@ -10,17 +10,17 @@ import (
 
 // Cleaner handles periodic cleanup of old events.
 type Cleaner struct {
-	db            *database.DB
-	retentionDays int
-	interval      time.Duration
+	db               *database.DB
+	retentionLedgers int
+	interval         time.Duration
 }
 
 // NewCleaner creates a new retention cleaner.
-func NewCleaner(db *database.DB, retentionDays int) *Cleaner {
+func NewCleaner(db *database.DB, retentionLedgers int) *Cleaner {
 	return &Cleaner{
-		db:            db,
-		retentionDays: retentionDays,
-		interval:      1 * time.Hour,
+		db:               db,
+		retentionLedgers: retentionLedgers,
+		interval:         1 * time.Hour,
 	}
 }
 
@@ -44,9 +44,37 @@ func (c *Cleaner) Run(ctx context.Context) {
 }
 
 func (c *Cleaner) cleanup() {
-	log.Printf("Running retention cleanup (keeping %d days)", c.retentionDays)
+	if c.retentionLedgers <= 0 {
+		log.Printf("Retention cleanup skipped (retention_ledgers=%d)", c.retentionLedgers)
+		return
+	}
 
-	stats, err := c.db.DeleteOldEvents(c.retentionDays)
+	state, err := c.db.GetIngestionState()
+	if err != nil {
+		log.Printf("Error getting state: %v", err)
+		return
+	}
+	if state == nil || state.LatestLedger == 0 {
+		log.Printf("Retention cleanup skipped (no latest ledger yet)")
+		return
+	}
+
+	latestLedger := state.LatestLedger
+	keep := uint32(c.retentionLedgers)
+	var minLedgerToKeep uint32
+	if latestLedger > keep {
+		minLedgerToKeep = latestLedger - keep + 1
+	} else {
+		minLedgerToKeep = 1
+	}
+	if minLedgerToKeep <= 1 {
+		log.Printf("Retention cleanup skipped (keeping from ledger %d)", minLedgerToKeep)
+		return
+	}
+
+	log.Printf("Running retention cleanup (keeping last %d ledgers)", c.retentionLedgers)
+
+	stats, err := c.db.DeleteOldEvents(minLedgerToKeep)
 	if err != nil {
 		log.Printf("Error during cleanup: %v", err)
 		return
@@ -56,22 +84,13 @@ func (c *Cleaner) cleanup() {
 		stats.EventsDeleted, stats.LedgersDeleted, stats.Batches)
 
 	// Update earliest ledger in state
-	state, err := c.db.GetIngestionState()
-	if err != nil {
-		log.Printf("Error getting state: %v", err)
-		return
-	}
-
-	if state != nil {
-		// Find the new earliest ledger
-		var earliest uint32
-		err := c.db.Conn().QueryRow(`
-			SELECT MIN(ledger_sequence) FROM ingested_ledgers
-		`).Scan(&earliest)
-		if err == nil && earliest > 0 {
-			state.EarliestLedger = earliest
-			_ = c.db.UpdateIngestionState(state)
-		}
+	var earliest uint32
+	err = c.db.Conn().QueryRow(`
+		SELECT MIN(ledger_sequence) FROM ingested_ledgers
+	`).Scan(&earliest)
+	if err == nil && earliest > 0 {
+		state.EarliestLedger = earliest
+		_ = c.db.UpdateIngestionState(state)
 	}
 
 	log.Printf("Retention cleanup complete")

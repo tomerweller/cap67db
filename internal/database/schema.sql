@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS ingestion_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     earliest_ledger INTEGER NOT NULL,
     latest_ledger INTEGER NOT NULL,
-    retention_days INTEGER NOT NULL DEFAULT 7,
+    retention_ledgers INTEGER NOT NULL DEFAULT 120960,
     is_ready BOOLEAN NOT NULL DEFAULT FALSE,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

@@ -86,7 +86,7 @@ func TestDecodeAddress_LiquidityPool_StrkeyString(t *testing.T) {
 
 	scVal := xdr.ScVal{
 		Type: xdr.ScValTypeScvString,
-		Str:  &addr,
+		Str:  ptrScString(xdr.ScString(addr)),
 	}
 
 	got, err := DecodeAddress(scVal)
@@ -109,7 +109,7 @@ func TestDecodeAddress_ClaimableBalance_StrkeyBytes(t *testing.T) {
 		t.Fatalf("strkey.Encode() error: %v", err)
 	}
 
-	addrBytes := []byte(addr)
+	addrBytes := xdr.ScBytes([]byte(addr))
 	scVal := xdr.ScVal{
 		Type:  xdr.ScValTypeScvBytes,
 		Bytes: &addrBytes,
@@ -122,6 +122,10 @@ func TestDecodeAddress_ClaimableBalance_StrkeyBytes(t *testing.T) {
 	if got != addr {
 		t.Errorf("DecodeAddress() = %s; want %s", got, addr)
 	}
+}
+
+func ptrScString(v xdr.ScString) *xdr.ScString {
+	return &v
 }
 
 func TestDecodeAddress_ClaimableBalance_ScAddress(t *testing.T) {
@@ -188,10 +192,10 @@ func TestDecodeAddress_LiquidityPool_ScAddress(t *testing.T) {
 
 func TestDecodeI128(t *testing.T) {
 	tests := []struct {
-		name   string
-		hi     int64
-		lo     uint64
-		want   string
+		name string
+		hi   int64
+		lo   uint64
+		want string
 	}{
 		{
 			name: "zero",

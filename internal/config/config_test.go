@@ -7,7 +7,7 @@ import (
 
 func TestLoad_Defaults(t *testing.T) {
 	// Clear any existing env vars
-	envVars := []string{"PORT", "DATABASE_PATH", "RETENTION_DAYS", "LOG_LEVEL", "STELLAR_NETWORK", "STELLAR_RPC_URL", "INGEST_WORKERS", "INGEST_BATCH_SIZE"}
+	envVars := []string{"PORT", "DATABASE_PATH", "RETENTION_LEDGERS", "LOG_LEVEL", "STELLAR_NETWORK", "STELLAR_RPC_URL", "INGEST_WORKERS", "INGEST_BATCH_SIZE"}
 	for _, v := range envVars {
 		os.Unsetenv(v)
 	}
@@ -20,8 +20,8 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.DatabasePath != "./cap67.db" {
 		t.Errorf("DatabasePath = %s; want ./cap67.db", cfg.DatabasePath)
 	}
-	if cfg.RetentionDays != 7 {
-		t.Errorf("RetentionDays = %d; want 7", cfg.RetentionDays)
+	if cfg.RetentionLedgers != 120960 {
+		t.Errorf("RetentionLedgers = %d; want 120960", cfg.RetentionLedgers)
 	}
 	if cfg.LogLevel != "info" {
 		t.Errorf("LogLevel = %s; want info", cfg.LogLevel)
@@ -40,14 +40,14 @@ func TestLoad_Defaults(t *testing.T) {
 func TestLoad_EnvOverrides(t *testing.T) {
 	os.Setenv("PORT", "9000")
 	os.Setenv("DATABASE_PATH", "/tmp/test.db")
-	os.Setenv("RETENTION_DAYS", "14")
+	os.Setenv("RETENTION_LEDGERS", "17280")
 	os.Setenv("STELLAR_NETWORK", "testnet")
 	os.Setenv("INGEST_WORKERS", "8")
 	os.Setenv("INGEST_BATCH_SIZE", "50")
 	defer func() {
 		os.Unsetenv("PORT")
 		os.Unsetenv("DATABASE_PATH")
-		os.Unsetenv("RETENTION_DAYS")
+		os.Unsetenv("RETENTION_LEDGERS")
 		os.Unsetenv("STELLAR_NETWORK")
 		os.Unsetenv("INGEST_WORKERS")
 		os.Unsetenv("INGEST_BATCH_SIZE")
@@ -61,8 +61,8 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	if cfg.DatabasePath != "/tmp/test.db" {
 		t.Errorf("DatabasePath = %s; want /tmp/test.db", cfg.DatabasePath)
 	}
-	if cfg.RetentionDays != 14 {
-		t.Errorf("RetentionDays = %d; want 14", cfg.RetentionDays)
+	if cfg.RetentionLedgers != 17280 {
+		t.Errorf("RetentionLedgers = %d; want 17280", cfg.RetentionLedgers)
 	}
 	if cfg.Network != "testnet" {
 		t.Errorf("Network = %s; want testnet", cfg.Network)

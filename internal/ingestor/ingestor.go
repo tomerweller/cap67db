@@ -17,7 +17,6 @@ import (
 	"github.com/stellar/go/xdr"
 )
 
-
 // Ingestor handles CAP-67 event ingestion from the S3 data lake.
 type Ingestor struct {
 	cfg     *config.Config
@@ -37,6 +36,8 @@ type Ingestor struct {
 	statsFee           int64
 	statsSetAuthorized int64
 }
+
+const maxTxOrder = (1 << 20) - 1
 
 // New creates a new Ingestor.
 func New(cfg *config.Config, db *database.DB) (*Ingestor, error) {
@@ -98,18 +99,19 @@ func (i *Ingestor) Run(ctx context.Context) error {
 		return fmt.Errorf("getting latest ledger: %w", err)
 	}
 
-	// Approximate ledgers per day: ~17,280 (5 sec per ledger)
-	ledgersPerDay := uint32(17280)
-	retentionLedgers := uint32(i.cfg.RetentionDays) * ledgersPerDay
-
 	var startLedger uint32
-	if latestLedger > retentionLedgers {
-		startLedger = latestLedger - retentionLedgers
-	} else {
+	if i.cfg.RetentionLedgers <= 0 {
 		startLedger = 1
+	} else {
+		retentionLedgers := uint32(i.cfg.RetentionLedgers)
+		if latestLedger > retentionLedgers {
+			startLedger = latestLedger - retentionLedgers + 1
+		} else {
+			startLedger = 1
+		}
 	}
 
-	log.Printf("Ingestion target: ledgers %d to %d (retention: %d days)", startLedger, latestLedger, i.cfg.RetentionDays)
+	log.Printf("Ingestion target: ledgers %d to %d (retention: %d ledgers)", startLedger, latestLedger, i.cfg.RetentionLedgers)
 
 	// Check for existing state
 	state, err := i.db.GetIngestionState()
@@ -120,10 +122,10 @@ func (i *Ingestor) Run(ctx context.Context) error {
 	if state == nil {
 		// Initialize state
 		state = &database.IngestionState{
-			EarliestLedger: startLedger,
-			LatestLedger:   startLedger - 1, // Will be updated as we ingest
-			RetentionDays:  i.cfg.RetentionDays,
-			IsReady:        false,
+			EarliestLedger:   startLedger,
+			LatestLedger:     startLedger - 1, // Will be updated as we ingest
+			RetentionLedgers: i.cfg.RetentionLedgers,
+			IsReady:          false,
 		}
 		if err := i.db.UpdateIngestionState(state); err != nil {
 			return fmt.Errorf("initializing state: %w", err)
@@ -131,6 +133,7 @@ func (i *Ingestor) Run(ctx context.Context) error {
 	} else {
 		// Reset ready state - will be set true after backfill completes
 		state.IsReady = false
+		state.RetentionLedgers = i.cfg.RetentionLedgers
 		if err := i.db.UpdateIngestionState(state); err != nil {
 			return fmt.Errorf("resetting ready state: %w", err)
 		}
@@ -421,7 +424,11 @@ func (i *Ingestor) extractEventsFromMeta(ledgerMeta xdr.LedgerCloseMeta, seq uin
 		return nil, closedAt
 	}
 
-	var events []*database.Event
+	var (
+		events         []*database.Event
+		beforeAllIndex int32
+		afterAllIndex  int32
+	)
 
 	for {
 		tx, err := txReader.Read()
@@ -441,60 +448,62 @@ func (i *Ingestor) extractEventsFromMeta(ledgerMeta xdr.LedgerCloseMeta, seq uin
 		// Process V3 meta
 		if tx.UnsafeMeta.V == 3 && tx.UnsafeMeta.V3 != nil {
 			if sorobanMeta := tx.UnsafeMeta.V3.SorobanMeta; sorobanMeta != nil {
-				var eventIndex int32
-
-				for _, event := range sorobanMeta.Events {
+				for eventIndex, event := range sorobanMeta.Events {
 					txCtx.InSuccessfulTxn = true
-					if e := i.extractEvent(event, txCtx, eventIndex); e != nil {
+					if e := i.extractEvent(event, txCtx, int32(eventIndex)); e != nil {
 						events = append(events, e)
 					}
-					eventIndex++
 				}
 
-				for _, diagEvent := range sorobanMeta.DiagnosticEvents {
-					txCtx.InSuccessfulTxn = diagEvent.InSuccessfulContractCall
-					if e := i.extractEvent(diagEvent.Event, txCtx, eventIndex); e != nil {
-						events = append(events, e)
-					}
-					eventIndex++
-				}
+				// Skip diagnostic events to match Stellar RPC getEvents output.
 			}
 		}
 
 		// Process V4 meta (Protocol 23+)
 		if tx.UnsafeMeta.V == 4 && tx.UnsafeMeta.V4 != nil {
 			v4Meta := tx.UnsafeMeta.V4
-			var eventIndex int32
-
 			// Operation-level events (ordered by operation index)
 			for opIdx, op := range v4Meta.Operations {
-				txCtx.OpIndex = int32(opIdx) + 1
+				txCtx.OpIndex = int32(opIdx)
 				txCtx.InSuccessfulTxn = txCtx.Successful
-				for _, opEvent := range op.Events {
-					if e := i.extractEvent(opEvent, txCtx, eventIndex); e != nil {
+				for eventIndex, opEvent := range op.Events {
+					if e := i.extractEvent(opEvent, txCtx, int32(eventIndex)); e != nil {
 						events = append(events, e)
 					}
-					eventIndex++
 				}
 			}
 
 			// Transaction-level events
 			txCtx.OpIndex = 0
+			var afterTxIndex int32
 			for _, txEvent := range v4Meta.Events {
 				txCtx.InSuccessfulTxn = true
-				if e := i.extractEvent(txEvent.Event, txCtx, eventIndex); e != nil {
-					events = append(events, e)
+				switch txEvent.Stage {
+				case xdr.TransactionEventStageTransactionEventStageBeforeAllTxs:
+					txCtx.TxOrder = 0
+					idx := beforeAllIndex
+					beforeAllIndex++
+					if e := i.extractEvent(txEvent.Event, txCtx, idx); e != nil {
+						events = append(events, e)
+					}
+				case xdr.TransactionEventStageTransactionEventStageAfterAllTxs:
+					txCtx.TxOrder = maxTxOrder
+					idx := afterAllIndex
+					afterAllIndex++
+					if e := i.extractEvent(txEvent.Event, txCtx, idx); e != nil {
+						events = append(events, e)
+					}
+				default:
+					txCtx.TxOrder = GetTxOrderInLedger(tx)
+					idx := afterTxIndex
+					afterTxIndex++
+					if e := i.extractEvent(txEvent.Event, txCtx, idx); e != nil {
+						events = append(events, e)
+					}
 				}
-				eventIndex++
 			}
 
-			for _, diagEvent := range v4Meta.DiagnosticEvents {
-				txCtx.InSuccessfulTxn = diagEvent.InSuccessfulContractCall
-				if e := i.extractEvent(diagEvent.Event, txCtx, eventIndex); e != nil {
-					events = append(events, e)
-				}
-				eventIndex++
-			}
+			// Skip diagnostic events to match Stellar RPC getEvents output.
 		}
 	}
 
@@ -591,6 +600,10 @@ func (i *Ingestor) processLedger(ctx context.Context, seq uint32) error {
 		return fmt.Errorf("creating tx reader: %w", err)
 	}
 
+	var (
+		beforeAllIndex int32
+		afterAllIndex  int32
+	)
 	for {
 		tx, err := txReader.Read()
 		if err != nil {
@@ -609,63 +622,65 @@ func (i *Ingestor) processLedger(ctx context.Context, seq uint32) error {
 		// Process V3 meta
 		if tx.UnsafeMeta.V == 3 && tx.UnsafeMeta.V3 != nil {
 			if sorobanMeta := tx.UnsafeMeta.V3.SorobanMeta; sorobanMeta != nil {
-				var eventIndex int32
-
 				// Events
-				for _, event := range sorobanMeta.Events {
+				for eventIndex, event := range sorobanMeta.Events {
 					txCtx.InSuccessfulTxn = true
-					if err := i.processEvent(event, txCtx, eventIndex); err != nil {
+					if err := i.processEvent(event, txCtx, int32(eventIndex)); err != nil {
 						log.Printf("Error processing event in ledger %d: %v", seq, err)
 					}
-					eventIndex++
 				}
 
 				// Diagnostic events
-				for _, diagEvent := range sorobanMeta.DiagnosticEvents {
-					txCtx.InSuccessfulTxn = diagEvent.InSuccessfulContractCall
-					if err := i.processEvent(diagEvent.Event, txCtx, eventIndex); err != nil {
-						log.Printf("Error processing diagnostic event in ledger %d: %v", seq, err)
-					}
-					eventIndex++
-				}
+				// Skip diagnostic events to match Stellar RPC getEvents output.
 			}
 		}
 
 		// Process V4 meta (Protocol 23+)
 		if tx.UnsafeMeta.V == 4 && tx.UnsafeMeta.V4 != nil {
 			v4Meta := tx.UnsafeMeta.V4
-			var eventIndex int32
-
 			// Operation-level events (ordered by operation index)
 			for opIdx, op := range v4Meta.Operations {
-				txCtx.OpIndex = int32(opIdx) + 1
+				txCtx.OpIndex = int32(opIdx)
 				txCtx.InSuccessfulTxn = txCtx.Successful
-				for _, opEvent := range op.Events {
-					if err := i.processEvent(opEvent, txCtx, eventIndex); err != nil {
+				for eventIndex, opEvent := range op.Events {
+					if err := i.processEvent(opEvent, txCtx, int32(eventIndex)); err != nil {
 						log.Printf("Error processing V4 op event in ledger %d: %v", seq, err)
 					}
-					eventIndex++
 				}
 			}
 
 			// Transaction-level events
 			txCtx.OpIndex = 0
+			var afterTxIndex int32
 			for _, txEvent := range v4Meta.Events {
 				txCtx.InSuccessfulTxn = true
-				if err := i.processEvent(txEvent.Event, txCtx, eventIndex); err != nil {
-					log.Printf("Error processing V4 event in ledger %d: %v", seq, err)
+				switch txEvent.Stage {
+				case xdr.TransactionEventStageTransactionEventStageBeforeAllTxs:
+					txCtx.TxOrder = 0
+					idx := beforeAllIndex
+					beforeAllIndex++
+					if err := i.processEvent(txEvent.Event, txCtx, idx); err != nil {
+						log.Printf("Error processing V4 event in ledger %d: %v", seq, err)
+					}
+				case xdr.TransactionEventStageTransactionEventStageAfterAllTxs:
+					txCtx.TxOrder = maxTxOrder
+					idx := afterAllIndex
+					afterAllIndex++
+					if err := i.processEvent(txEvent.Event, txCtx, idx); err != nil {
+						log.Printf("Error processing V4 event in ledger %d: %v", seq, err)
+					}
+				default:
+					txCtx.TxOrder = GetTxOrderInLedger(tx)
+					idx := afterTxIndex
+					afterTxIndex++
+					if err := i.processEvent(txEvent.Event, txCtx, idx); err != nil {
+						log.Printf("Error processing V4 event in ledger %d: %v", seq, err)
+					}
 				}
-				eventIndex++
 			}
 
 			// Diagnostic events
-			for _, diagEvent := range v4Meta.DiagnosticEvents {
-				txCtx.InSuccessfulTxn = diagEvent.InSuccessfulContractCall
-				if err := i.processEvent(diagEvent.Event, txCtx, eventIndex); err != nil {
-					log.Printf("Error processing V4 diagnostic event in ledger %d: %v", seq, err)
-				}
-				eventIndex++
-			}
+			// Skip diagnostic events to match Stellar RPC getEvents output.
 		}
 	}
 

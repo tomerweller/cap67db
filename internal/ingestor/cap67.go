@@ -32,6 +32,9 @@ type EventContext struct {
 // IsCAP67Event checks if an event matches a CAP-67 event type.
 // Returns the event type string and true if it matches.
 func IsCAP67Event(event xdr.ContractEvent) (string, bool) {
+	if event.Type != xdr.ContractEventTypeContract {
+		return "", false
+	}
 	if event.Body.V0 == nil || len(event.Body.V0.Topics) == 0 {
 		return "", false
 	}
@@ -369,8 +372,8 @@ func extractAmountAndMuxedID(data xdr.ScVal) (string, *string) {
 	return "", nil
 }
 
-// GetTxOrderInLedger returns the 1-based position of a transaction in the ledger.
+// GetTxOrderInLedger returns the 0-based position of a transaction in the ledger
+// to match Stellar RPC event IDs.
 func GetTxOrderInLedger(tx ingest.LedgerTransaction) int32 {
-	// LedgerTransaction.Index is 0-based, TOID uses 1-based (SEP-0035: https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0035.md)
-	return int32(tx.Index) + 1
+	return int32(tx.Index)
 }
