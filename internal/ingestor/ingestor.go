@@ -556,11 +556,14 @@ func (i *Ingestor) continuousIngest(ctx context.Context, startLedger uint32) err
 			default:
 			}
 
-			// Direct S3 fetch (no PrepareRange needed)
-			if err := i.processLedger(ctx, seq); err != nil {
-				log.Printf("Error processing ledger %d: %v", seq, err)
-				time.Sleep(time.Second)
-				continue
+			// Direct S3 fetch (no PrepareRange needed). Retry until success to avoid gaps.
+			for {
+				if err := i.processLedger(ctx, seq); err != nil {
+					log.Printf("Error processing ledger %d: %v (retrying)", seq, err)
+					time.Sleep(2 * time.Second)
+					continue
+				}
+				break
 			}
 
 			// Update state
